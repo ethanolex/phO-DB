@@ -12,13 +12,13 @@ import {
 
 // Your Firebase configuration object (you'll provide these details)
 const firebaseConfig = {
-    apiKey: "AIzaSyCr9BR8rQpgtV9AwUL5YeeZTL5T19BknmU",
-    authDomain: "pho-db-b5eb6.firebaseapp.com",
-    projectId: "pho-db-b5eb6",
-    storageBucket: "pho-db-b5eb6.firebasestorage.app",
-    messagingSenderId: "611640964884",
-    appId: "1:611640964884:web:2196660cc566c01259f401",
-    measurementId: "G-3NDS09LK4Y"
+    apiKey: "********",
+    authDomain: "********",
+    projectId: "********",
+    storageBucket: "********",
+    messagingSenderId: "********",
+    appId: "********",
+    measurementId: "********"
 };
 
 // Initialize Firebase
