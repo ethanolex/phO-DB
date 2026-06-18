@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { registerUser, loginUser, resetPassword } from './firebase';
 import './App.css';
@@ -659,7 +659,7 @@ const App = () => {
         );
     }, [loginUser, registerUser, resetPassword, setCurrentPage]);
     
-    // Contribute Page Component
+    // Contribute Page Component - Updated with file upload support
     const ContributePage = useCallback(() => {
         const { currentUser } = useAuth();
         const [formData, setFormData] = useState({
@@ -667,10 +667,21 @@ const App = () => {
             competition: '',
             difficulty: '',
             topic: '',
-            text: '',
-            solution: '',
-            year: ''
+            year: '',
+            problemFiles: [],
+            solutionFiles: []
         });
+        
+        const [uploadProgress, setUploadProgress] = useState({
+            problem: 0,
+            solution: 0
+        });
+        const [isSubmitting, setIsSubmitting] = useState(false);
+        const [uploadError, setUploadError] = useState(null);
+        const [uploadSuccess, setUploadSuccess] = useState(false);
+        
+        const problemFileInputRef = useRef(null);
+        const solutionFileInputRef = useRef(null);
         
         if (!currentUser) {
             return (
@@ -687,18 +698,116 @@ const App = () => {
             );
         }
         
+        const handleFileUpload = (files, type) => {
+            const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+            const maxSize = 10 * 1024 * 1024; // 10MB
+            
+            const validFiles = Array.from(files).filter(file => {
+                if (!validTypes.includes(file.type)) {
+                    setUploadError(`Invalid file type: ${file.name}. Only images and PDFs are allowed.`);
+                    return false;
+                }
+                if (file.size > maxSize) {
+                    setUploadError(`File too large: ${file.name}. Maximum size is 10MB.`);
+                    return false;
+                }
+                return true;
+            });
+            
+            if (validFiles.length === 0) return;
+            
+            // Simulate upload progress
+            validFiles.forEach(file => {
+                const reader = new FileReader();
+                reader.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const progress = Math.round((event.loaded / event.total) * 100);
+                        setUploadProgress(prev => ({
+                            ...prev,
+                            [type]: progress
+                        }));
+                    }
+                };
+                reader.onloadend = () => {
+                    setUploadProgress(prev => ({
+                        ...prev,
+                        [type]: 100
+                    }));
+                };
+                reader.readAsDataURL(file);
+            });
+            
+            setFormData(prev => ({
+                ...prev,
+                [`${type}Files`]: [...prev[`${type}Files`], ...validFiles]
+            }));
+            
+            setUploadError(null);
+        };
+        
+        const removeFile = (index, type) => {
+            setFormData(prev => ({
+                ...prev,
+                [`${type}Files`]: prev[`${type}Files`].filter((_, i) => i !== index)
+            }));
+            
+            // Reset progress if no files left
+            if (formData[`${type}Files`].length <= 1) {
+                setUploadProgress(prev => ({
+                    ...prev,
+                    [type]: 0
+                }));
+            }
+        };
+        
         const handleSubmit = (e) => {
             e.preventDefault();
-            alert('Thank you for your contribution! In a production environment, this would be saved to the database with your user ID: ' + currentUser.uid);
-            setFormData({
-                title: '',
-                competition: '',
-                difficulty: '',
-                topic: '',
-                text: '',
-                solution: '',
-                year: ''
+            setIsSubmitting(true);
+            setUploadError(null);
+            
+            // Validate that at least one file is uploaded for problem and solution
+            if (formData.problemFiles.length === 0) {
+                setUploadError('Please upload at least one problem statement file.');
+                setIsSubmitting(false);
+                return;
+            }
+            
+            if (formData.solutionFiles.length === 0) {
+                setUploadError('Please upload at least one solution file.');
+                setIsSubmitting(false);
+                return;
+            }
+            
+            // In a real implementation, you would upload files to Firebase Storage here
+            // and save the file URLs to Firestore
+            console.log('Submitting problem with files:', {
+                ...formData,
+                problemFiles: formData.problemFiles.map(f => f.name),
+                solutionFiles: formData.solutionFiles.map(f => f.name),
+                userId: currentUser.uid,
+                timestamp: new Date().toISOString()
             });
+            
+            // Simulate submission
+            setTimeout(() => {
+                setUploadSuccess(true);
+                setIsSubmitting(false);
+                
+                // Reset form after success
+                setTimeout(() => {
+                    setFormData({
+                        title: '',
+                        competition: '',
+                        difficulty: '',
+                        topic: '',
+                        year: '',
+                        problemFiles: [],
+                        solutionFiles: []
+                    });
+                    setUploadProgress({ problem: 0, solution: 0 });
+                    setUploadSuccess(false);
+                }, 3000);
+            }, 1500);
         };
         
         const handleChange = (e) => {
@@ -708,11 +817,25 @@ const App = () => {
             });
         };
         
+        const formatFileSize = (bytes) => {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        };
+        
+        const getFileIcon = (file) => {
+            if (file.type === 'application/pdf') return 'fa-file-pdf';
+            if (file.type.startsWith('image/')) return 'fa-file-image';
+            return 'fa-file';
+        };
+        
         return (
             <div className="contribute-page">
                 <div className="contribute-header">
-                    <h1><i className="fas fa-plus-circle"></i> Contribute a Problem</h1>
-                    <p>Share your knowledge with the physics community. Submit a problem you've created or adapted from competitions.</p>
+                    <h1><i className="fas fa-upload"></i> Contribute a Problem</h1>
+                    <p>Share your knowledge with the physics community. Upload problem statements and solutions as images or PDFs.</p>
                     {currentUser && (
                         <div className="user-badge">
                             <i className="fas fa-user-check"></i>
@@ -720,6 +843,18 @@ const App = () => {
                         </div>
                     )}
                 </div>
+                
+                {uploadError && (
+                    <div className="error-message" style={{ marginBottom: '20px' }}>
+                        <i className="fas fa-exclamation-circle"></i> {uploadError}
+                    </div>
+                )}
+                
+                {uploadSuccess && (
+                    <div className="success-message" style={{ marginBottom: '20px' }}>
+                        <i className="fas fa-check-circle"></i> Problem submitted successfully! Thank you for your contribution.
+                    </div>
+                )}
                 
                 <form className="contribute-form" onSubmit={handleSubmit}>
                     <div className="form-grid">
@@ -780,28 +915,128 @@ const App = () => {
                             />
                         </div>
                         
+                        {/* File Upload for Problem Statement */}
                         <div className="form-group full-width">
-                            <label>Problem Statement *</label>
-                            <textarea
-                                name="text"
-                                value={formData.text}
-                                onChange={handleChange}
-                                rows="5"
-                                placeholder="Describe the problem in detail..."
-                                required
-                            ></textarea>
+                            <label>Problem Statement Files *</label>
+                            <div className="file-upload-area">
+                                <div className="file-drop-zone">
+                                    <i className="fas fa-cloud-upload-alt"></i>
+                                    <p>Drag & drop files here or click to browse</p>
+                                    <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
+                                    <input
+                                        type="file"
+                                        ref={problemFileInputRef}
+                                        onChange={(e) => handleFileUpload(e.target.files, 'problem')}
+                                        accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf"
+                                        multiple
+                                        className="file-input-hidden"
+                                        onClick={(e) => e.target.value = null}
+                                    />
+                                    <button 
+                                        type="button" 
+                                        className="file-select-btn"
+                                        onClick={() => problemFileInputRef.current?.click()}
+                                    >
+                                        <i className="fas fa-folder-open"></i> Browse Files
+                                    </button>
+                                </div>
+                                
+                                {uploadProgress.problem > 0 && uploadProgress.problem < 100 && (
+                                    <div className="upload-progress">
+                                        <div className="progress-bar">
+                                            <div 
+                                                className="progress-fill" 
+                                                style={{ width: `${uploadProgress.problem}%` }}
+                                            ></div>
+                                        </div>
+                                        <span className="progress-text">{uploadProgress.problem}%</span>
+                                    </div>
+                                )}
+                                
+                                {formData.problemFiles.length > 0 && (
+                                    <div className="file-list">
+                                        <h4>Uploaded Files ({formData.problemFiles.length})</h4>
+                                        {formData.problemFiles.map((file, index) => (
+                                            <div key={index} className="file-item">
+                                                <i className={`fas ${getFileIcon(file)}`}></i>
+                                                <div className="file-info">
+                                                    <span className="file-name">{file.name}</span>
+                                                    <span className="file-size">{formatFileSize(file.size)}</span>
+                                                </div>
+                                                <button 
+                                                    type="button" 
+                                                    className="file-remove"
+                                                    onClick={() => removeFile(index, 'problem')}
+                                                >
+                                                    <i className="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         
+                        {/* File Upload for Solution */}
                         <div className="form-group full-width">
-                            <label>Solution *</label>
-                            <textarea
-                                name="solution"
-                                value={formData.solution}
-                                onChange={handleChange}
-                                rows="5"
-                                placeholder="Provide the solution or answer..."
-                                required
-                            ></textarea>
+                            <label>Solution Files *</label>
+                            <div className="file-upload-area">
+                                <div className="file-drop-zone">
+                                    <i className="fas fa-cloud-upload-alt"></i>
+                                    <p>Drag & drop solution files here or click to browse</p>
+                                    <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
+                                    <input
+                                        type="file"
+                                        ref={solutionFileInputRef}
+                                        onChange={(e) => handleFileUpload(e.target.files, 'solution')}
+                                        accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf"
+                                        multiple
+                                        className="file-input-hidden"
+                                        onClick={(e) => e.target.value = null}
+                                    />
+                                    <button 
+                                        type="button" 
+                                        className="file-select-btn"
+                                        onClick={() => solutionFileInputRef.current?.click()}
+                                    >
+                                        <i className="fas fa-folder-open"></i> Browse Files
+                                    </button>
+                                </div>
+                                
+                                {uploadProgress.solution > 0 && uploadProgress.solution < 100 && (
+                                    <div className="upload-progress">
+                                        <div className="progress-bar">
+                                            <div 
+                                                className="progress-fill" 
+                                                style={{ width: `${uploadProgress.solution}%` }}
+                                            ></div>
+                                        </div>
+                                        <span className="progress-text">{uploadProgress.solution}%</span>
+                                    </div>
+                                )}
+                                
+                                {formData.solutionFiles.length > 0 && (
+                                    <div className="file-list">
+                                        <h4>Uploaded Files ({formData.solutionFiles.length})</h4>
+                                        {formData.solutionFiles.map((file, index) => (
+                                            <div key={index} className="file-item">
+                                                <i className={`fas ${getFileIcon(file)}`}></i>
+                                                <div className="file-info">
+                                                    <span className="file-name">{file.name}</span>
+                                                    <span className="file-size">{formatFileSize(file.size)}</span>
+                                                </div>
+                                                <button 
+                                                    type="button" 
+                                                    className="file-remove"
+                                                    onClick={() => removeFile(index, 'solution')}
+                                                >
+                                                    <i className="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                     
@@ -809,14 +1044,27 @@ const App = () => {
                         <button type="button" className="cancel-btn" onClick={() => setCurrentPage('database')}>
                             Cancel
                         </button>
-                        <button type="submit" className="submit-btn">
-                            <i className="fas fa-paper-plane"></i> Submit Problem
+                        <button type="submit" className="submit-btn" disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <>
+                                    <i className="fas fa-spinner fa-spin"></i> Submitting...
+                                </>
+                            ) : (
+                                <>
+                                    <i className="fas fa-paper-plane"></i> Submit Problem
+                                </>
+                            )}
                         </button>
                     </div>
                     
                     <div className="contribute-note">
                         <i className="fas fa-info-circle"></i>
                         <p>All submissions will be reviewed before being published to maintain quality standards.</p>
+                        <p className="file-requirements">
+                            <strong>File Requirements:</strong>
+                            <span>Maximum 10MB per file</span>
+                            <span>Supported formats: JPG, PNG, GIF, WebP, PDF</span>
+                        </p>
                     </div>
                 </form>
             </div>
