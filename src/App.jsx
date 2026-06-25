@@ -1,6 +1,14 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useAuth } from './contexts/AuthContext';
-import { registerUser, loginUser, resetPassword } from './firebase';
+import { 
+    registerUser, 
+    loginUser, 
+    resetPassword, 
+    addProblemToFirestore, 
+    uploadProblemFiles,
+    processFilesWithMathpix,
+    convertToLatex
+} from './firebase';
 import './App.css';
 
 const App = () => {
@@ -245,7 +253,7 @@ const App = () => {
         const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
         
         // Update global search query when user stops typing (debounced)
-        React.useEffect(() => {
+        useEffect(() => {
             const timer = setTimeout(() => {
                 setSearchQuery(localSearchQuery);
             }, 300);
@@ -659,7 +667,7 @@ const App = () => {
         );
     }, [loginUser, registerUser, resetPassword, setCurrentPage]);
     
-    // Contribute Page Component - Updated with file upload support
+    // Contribute Page Component - Updated with Mathpix integration
     const ContributePage = useCallback(() => {
         const { currentUser } = useAuth();
         const [formData, setFormData] = useState({
@@ -674,11 +682,19 @@ const App = () => {
         
         const [uploadProgress, setUploadProgress] = useState({
             problem: 0,
-            solution: 0
+            solution: 0,
+            ocr: 0,
+            overall: 0
         });
         const [isSubmitting, setIsSubmitting] = useState(false);
         const [uploadError, setUploadError] = useState(null);
         const [uploadSuccess, setUploadSuccess] = useState(false);
+        const [uploadStatus, setUploadStatus] = useState('');
+        const [latexPreview, setLatexPreview] = useState({
+            problem: '',
+            solution: ''
+        });
+        const [showLatexPreview, setShowLatexPreview] = useState(false);
         
         const problemFileInputRef = useRef(null);
         const solutionFileInputRef = useRef(null);
@@ -716,27 +732,6 @@ const App = () => {
             
             if (validFiles.length === 0) return;
             
-            // Simulate upload progress
-            validFiles.forEach(file => {
-                const reader = new FileReader();
-                reader.onprogress = (event) => {
-                    if (event.lengthComputable) {
-                        const progress = Math.round((event.loaded / event.total) * 100);
-                        setUploadProgress(prev => ({
-                            ...prev,
-                            [type]: progress
-                        }));
-                    }
-                };
-                reader.onloadend = () => {
-                    setUploadProgress(prev => ({
-                        ...prev,
-                        [type]: 100
-                    }));
-                };
-                reader.readAsDataURL(file);
-            });
-            
             setFormData(prev => ({
                 ...prev,
                 [`${type}Files`]: [...prev[`${type}Files`], ...validFiles]
@@ -750,20 +745,43 @@ const App = () => {
                 ...prev,
                 [`${type}Files`]: prev[`${type}Files`].filter((_, i) => i !== index)
             }));
+        };
+        
+        const handlePreviewLatex = async (type) => {
+            const files = type === 'problem' ? formData.problemFiles : formData.solutionFiles;
+            if (files.length === 0) {
+                setUploadError(`No ${type} files to preview`);
+                return;
+            }
             
-            // Reset progress if no files left
-            if (formData[`${type}Files`].length <= 1) {
-                setUploadProgress(prev => ({
-                    ...prev,
-                    [type]: 0
-                }));
+            setUploadStatus(`Processing ${type} files for LaTeX preview...`);
+            setShowLatexPreview(true);
+            
+            try {
+                // Process only the first file for preview
+                const result = await convertToLatex(files[0]);
+                if (result.success) {
+                    setLatexPreview(prev => ({
+                        ...prev,
+                        [type]: result.latex
+                    }));
+                    setUploadError(null);
+                } else {
+                    setUploadError(`Failed to convert ${type} file: ${result.error}`);
+                }
+            } catch (error) {
+                setUploadError(`Error processing ${type} file: ${error.message}`);
+            } finally {
+                setUploadStatus('');
             }
         };
         
-        const handleSubmit = (e) => {
+        const handleSubmit = async (e) => {
             e.preventDefault();
             setIsSubmitting(true);
             setUploadError(null);
+            setUploadSuccess(false);
+            setUploadStatus('Validating files...');
             
             // Validate that at least one file is uploaded for problem and solution
             if (formData.problemFiles.length === 0) {
@@ -778,36 +796,151 @@ const App = () => {
                 return;
             }
             
-            // In a real implementation, you would upload files to Firebase Storage here
-            // and save the file URLs to Firestore
-            console.log('Submitting problem with files:', {
-                ...formData,
-                problemFiles: formData.problemFiles.map(f => f.name),
-                solutionFiles: formData.solutionFiles.map(f => f.name),
-                userId: currentUser.uid,
-                timestamp: new Date().toISOString()
-            });
-            
-            // Simulate submission
-            setTimeout(() => {
-                setUploadSuccess(true);
-                setIsSubmitting(false);
+            try {
+                // Generate a unique ID for the problem
+                const problemId = `problem_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 
-                // Reset form after success
-                setTimeout(() => {
-                    setFormData({
-                        title: '',
-                        competition: '',
-                        difficulty: '',
-                        topic: '',
-                        year: '',
-                        problemFiles: [],
-                        solutionFiles: []
+                // Step 1: Upload files to Firebase Storage
+                setUploadStatus('Uploading problem files to storage...');
+                const problemUrls = await uploadProblemFiles(
+                    formData.problemFiles, 
+                    problemId, 
+                    'problem',
+                    (progress) => {
+                        setUploadProgress(prev => ({ ...prev, problem: Math.round(progress) }));
+                    }
+                );
+                
+                setUploadStatus('Uploading solution files to storage...');
+                const solutionUrls = await uploadProblemFiles(
+                    formData.solutionFiles, 
+                    problemId, 
+                    'solution',
+                    (progress) => {
+                        setUploadProgress(prev => ({ ...prev, solution: Math.round(progress) }));
+                    }
+                );
+                
+                // Step 2: Process files with Mathpix API to extract LaTeX
+                setUploadStatus('Extracting LaTeX from problem files with Mathpix...');
+                const problemLatexResults = await processFilesWithMathpix(
+                    formData.problemFiles,
+                    (progress) => {
+                        setUploadProgress(prev => ({ ...prev, ocr: Math.round(progress * 0.5) }));
+                    }
+                );
+                
+                setUploadStatus('Extracting LaTeX from solution files with Mathpix...');
+                const solutionLatexResults = await processFilesWithMathpix(
+                    formData.solutionFiles,
+                    (progress) => {
+                        setUploadProgress(prev => ({ ...prev, ocr: 50 + Math.round(progress * 0.5) }));
+                    }
+                );
+                
+                // Combine LaTeX from all files
+                const combinedProblemLatex = problemLatexResults
+                    .filter(result => result.success)
+                    .map(result => result.latex)
+                    .join('\n\n');
+                    
+                const combinedSolutionLatex = solutionLatexResults
+                    .filter(result => result.success)
+                    .map(result => result.latex)
+                    .join('\n\n');
+                
+                // Check if any files failed to convert
+                const failedProblemFiles = problemLatexResults.filter(r => !r.success);
+                const failedSolutionFiles = solutionLatexResults.filter(r => !r.success);
+                
+                if (failedProblemFiles.length > 0) {
+                    console.warn('Some problem files failed to convert:', failedProblemFiles);
+                }
+                if (failedSolutionFiles.length > 0) {
+                    console.warn('Some solution files failed to convert:', failedSolutionFiles);
+                }
+                
+                // Step 3: Prepare data for Firestore
+                setUploadStatus('Saving to database...');
+                const problemData = {
+                    title: formData.title,
+                    competition: formData.competition,
+                    difficulty: formData.difficulty,
+                    topic: formData.topic,
+                    year: parseInt(formData.year) || null,
+                    problemStatementUrls: problemUrls,
+                    solutionUrls: solutionUrls,
+                    problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
+                    solutionLatex: combinedSolutionLatex || 'No LaTeX extracted from solution files',
+                    problemText: problemLatexResults
+                        .filter(result => result.success)
+                        .map(result => result.text)
+                        .join('\n\n'),
+                    solutionText: solutionLatexResults
+                        .filter(result => result.success)
+                        .map(result => result.text)
+                        .join('\n\n'),
+                    userId: currentUser.uid,
+                    userEmail: currentUser.email,
+                    userDisplayName: currentUser.displayName || currentUser.email?.split('@')[0],
+                    status: 'pending_review',
+                    fileCount: {
+                        problem: problemUrls.length,
+                        solution: solutionUrls.length
+                    },
+                    ocrConfidence: {
+                        problem: problemLatexResults
+                            .filter(r => r.success)
+                            .reduce((acc, r) => acc + (r.confidence || 0), 0) / 
+                            Math.max(problemLatexResults.filter(r => r.success).length, 1),
+                        solution: solutionLatexResults
+                            .filter(r => r.success)
+                            .reduce((acc, r) => acc + (r.confidence || 0), 0) / 
+                            Math.max(solutionLatexResults.filter(r => r.success).length, 1)
+                    }
+                };
+                
+                // Save to Firestore
+                const result = await addProblemToFirestore(problemData);
+                
+                if (result.success) {
+                    setUploadSuccess(true);
+                    setUploadStatus('Success!');
+                    setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
+                    
+                    // Show LaTeX preview on success
+                    setLatexPreview({
+                        problem: combinedProblemLatex,
+                        solution: combinedSolutionLatex
                     });
-                    setUploadProgress({ problem: 0, solution: 0 });
-                    setUploadSuccess(false);
-                }, 3000);
-            }, 1500);
+                    setShowLatexPreview(true);
+                    
+                    // Reset form after success
+                    setTimeout(() => {
+                        setFormData({
+                            title: '',
+                            competition: '',
+                            difficulty: '',
+                            topic: '',
+                            year: '',
+                            problemFiles: [],
+                            solutionFiles: []
+                        });
+                        setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
+                        setUploadSuccess(false);
+                        setUploadStatus('');
+                        setShowLatexPreview(false);
+                        setLatexPreview({ problem: '', solution: '' });
+                    }, 5000);
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (error) {
+                console.error('Error submitting problem:', error);
+                setUploadError(`Failed to submit problem: ${error.message}`);
+            } finally {
+                setIsSubmitting(false);
+            }
         };
         
         const handleChange = (e) => {
@@ -852,7 +985,58 @@ const App = () => {
                 
                 {uploadSuccess && (
                     <div className="success-message" style={{ marginBottom: '20px' }}>
-                        <i className="fas fa-check-circle"></i> Problem submitted successfully! Thank you for your contribution.
+                        <i className="fas fa-check-circle"></i> Problem submitted successfully! LaTeX extracted from {formData.problemFiles.length + formData.solutionFiles.length} files.
+                    </div>
+                )}
+                
+                {uploadStatus && !uploadSuccess && !uploadError && (
+                    <div className="status-message" style={{ 
+                        marginBottom: '20px', 
+                        padding: '12px', 
+                        background: '#e0f2fe', 
+                        borderRadius: '8px',
+                        color: '#0369a1'
+                    }}>
+                        <i className="fas fa-spinner fa-spin"></i> {uploadStatus}
+                    </div>
+                )}
+                
+                {/* LaTeX Preview Modal */}
+                {showLatexPreview && (
+                    <div className="latex-preview-modal">
+                        <div className="latex-preview-content">
+                            <div className="latex-preview-header">
+                                <h3><i className="fas fa-code"></i> LaTeX Preview</h3>
+                                <button 
+                                    className="modal-close" 
+                                    onClick={() => setShowLatexPreview(false)}
+                                >
+                                    ×
+                                </button>
+                            </div>
+                            <div className="latex-preview-body">
+                                {latexPreview.problem && (
+                                    <div className="latex-section">
+                                        <h4>Problem Statement LaTeX</h4>
+                                        <pre className="latex-code">{latexPreview.problem}</pre>
+                                    </div>
+                                )}
+                                {latexPreview.solution && (
+                                    <div className="latex-section">
+                                        <h4>Solution LaTeX</h4>
+                                        <pre className="latex-code">{latexPreview.solution}</pre>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="latex-preview-footer">
+                                <button 
+                                    className="close-modal-btn"
+                                    onClick={() => setShowLatexPreview(false)}
+                                >
+                                    Close Preview
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
                 
@@ -867,12 +1051,13 @@ const App = () => {
                                 onChange={handleChange}
                                 placeholder="e.g., Projectile Motion on an Incline"
                                 required
+                                disabled={isSubmitting}
                             />
                         </div>
                         
                         <div className="form-group">
                             <label>Competition *</label>
-                            <select name="competition" value={formData.competition} onChange={handleChange} required>
+                            <select name="competition" value={formData.competition} onChange={handleChange} required disabled={isSubmitting}>
                                 <option value="">Select competition</option>
                                 <option value="IPhO">IPhO</option>
                                 <option value="USAPhO">USAPhO</option>
@@ -882,7 +1067,7 @@ const App = () => {
                         
                         <div className="form-group">
                             <label>Difficulty *</label>
-                            <select name="difficulty" value={formData.difficulty} onChange={handleChange} required>
+                            <select name="difficulty" value={formData.difficulty} onChange={handleChange} required disabled={isSubmitting}>
                                 <option value="">Select difficulty</option>
                                 <option value="Easy">Easy</option>
                                 <option value="Medium">Medium</option>
@@ -892,7 +1077,7 @@ const App = () => {
                         
                         <div className="form-group">
                             <label>Topic *</label>
-                            <select name="topic" value={formData.topic} onChange={handleChange} required>
+                            <select name="topic" value={formData.topic} onChange={handleChange} required disabled={isSubmitting}>
                                 <option value="">Select topic</option>
                                 <option value="Mechanics">Mechanics</option>
                                 <option value="Thermodynamics">Thermodynamics</option>
@@ -912,6 +1097,7 @@ const App = () => {
                                 placeholder="e.g., 2023"
                                 min="1900"
                                 max="2025"
+                                disabled={isSubmitting}
                             />
                         </div>
                         
@@ -919,7 +1105,7 @@ const App = () => {
                         <div className="form-group full-width">
                             <label>Problem Statement Files *</label>
                             <div className="file-upload-area">
-                                <div className="file-drop-zone">
+                                <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
                                     <i className="fas fa-cloud-upload-alt"></i>
                                     <p>Drag & drop files here or click to browse</p>
                                     <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
@@ -931,11 +1117,13 @@ const App = () => {
                                         multiple
                                         className="file-input-hidden"
                                         onClick={(e) => e.target.value = null}
+                                        disabled={isSubmitting}
                                     />
                                     <button 
                                         type="button" 
                                         className="file-select-btn"
                                         onClick={() => problemFileInputRef.current?.click()}
+                                        disabled={isSubmitting}
                                     >
                                         <i className="fas fa-folder-open"></i> Browse Files
                                     </button>
@@ -955,7 +1143,17 @@ const App = () => {
                                 
                                 {formData.problemFiles.length > 0 && (
                                     <div className="file-list">
-                                        <h4>Uploaded Files ({formData.problemFiles.length})</h4>
+                                        <div className="file-list-header">
+                                            <h4>Uploaded Files ({formData.problemFiles.length})</h4>
+                                            <button 
+                                                type="button"
+                                                className="preview-latex-btn"
+                                                onClick={() => handlePreviewLatex('problem')}
+                                                disabled={isSubmitting}
+                                            >
+                                                <i className="fas fa-eye"></i> Preview LaTeX
+                                            </button>
+                                        </div>
                                         {formData.problemFiles.map((file, index) => (
                                             <div key={index} className="file-item">
                                                 <i className={`fas ${getFileIcon(file)}`}></i>
@@ -967,6 +1165,7 @@ const App = () => {
                                                     type="button" 
                                                     className="file-remove"
                                                     onClick={() => removeFile(index, 'problem')}
+                                                    disabled={isSubmitting}
                                                 >
                                                     <i className="fas fa-times"></i>
                                                 </button>
@@ -981,7 +1180,7 @@ const App = () => {
                         <div className="form-group full-width">
                             <label>Solution Files *</label>
                             <div className="file-upload-area">
-                                <div className="file-drop-zone">
+                                <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
                                     <i className="fas fa-cloud-upload-alt"></i>
                                     <p>Drag & drop solution files here or click to browse</p>
                                     <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
@@ -993,11 +1192,13 @@ const App = () => {
                                         multiple
                                         className="file-input-hidden"
                                         onClick={(e) => e.target.value = null}
+                                        disabled={isSubmitting}
                                     />
                                     <button 
                                         type="button" 
                                         className="file-select-btn"
                                         onClick={() => solutionFileInputRef.current?.click()}
+                                        disabled={isSubmitting}
                                     >
                                         <i className="fas fa-folder-open"></i> Browse Files
                                     </button>
@@ -1017,7 +1218,17 @@ const App = () => {
                                 
                                 {formData.solutionFiles.length > 0 && (
                                     <div className="file-list">
-                                        <h4>Uploaded Files ({formData.solutionFiles.length})</h4>
+                                        <div className="file-list-header">
+                                            <h4>Uploaded Files ({formData.solutionFiles.length})</h4>
+                                            <button 
+                                                type="button"
+                                                className="preview-latex-btn"
+                                                onClick={() => handlePreviewLatex('solution')}
+                                                disabled={isSubmitting}
+                                            >
+                                                <i className="fas fa-eye"></i> Preview LaTeX
+                                            </button>
+                                        </div>
                                         {formData.solutionFiles.map((file, index) => (
                                             <div key={index} className="file-item">
                                                 <i className={`fas ${getFileIcon(file)}`}></i>
@@ -1029,6 +1240,7 @@ const App = () => {
                                                     type="button" 
                                                     className="file-remove"
                                                     onClick={() => removeFile(index, 'solution')}
+                                                    disabled={isSubmitting}
                                                 >
                                                     <i className="fas fa-times"></i>
                                                 </button>
@@ -1041,7 +1253,7 @@ const App = () => {
                     </div>
                     
                     <div className="form-actions">
-                        <button type="button" className="cancel-btn" onClick={() => setCurrentPage('database')}>
+                        <button type="button" className="cancel-btn" onClick={() => setCurrentPage('database')} disabled={isSubmitting}>
                             Cancel
                         </button>
                         <button type="submit" className="submit-btn" disabled={isSubmitting}>
@@ -1059,11 +1271,12 @@ const App = () => {
                     
                     <div className="contribute-note">
                         <i className="fas fa-info-circle"></i>
-                        <p>All submissions will be reviewed before being published to maintain quality standards.</p>
+                        <p>All submissions will be processed with Mathpix OCR to extract LaTeX, then reviewed before being published.</p>
                         <p className="file-requirements">
                             <strong>File Requirements:</strong>
                             <span>Maximum 10MB per file</span>
                             <span>Supported formats: JPG, PNG, GIF, WebP, PDF</span>
+                            <span>LaTeX will be automatically extracted using Mathpix API</span>
                         </p>
                     </div>
                 </form>
@@ -1154,4 +1367,4 @@ const App = () => {
     );
 };
 
-export default App; 
+export default App;
