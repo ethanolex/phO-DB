@@ -220,7 +220,7 @@ const App = () => {
             </div>
             
             <div className="features-section">
-                <h2>Why Choose PhysOlympiad?</h2>
+                <h2>Why Choose phO-DB?</h2>
                 <div className="features-grid">
                     <div className="feature-card">
                         <i className="fas fa-search"></i>
@@ -1061,7 +1061,7 @@ const App = () => {
                                 <option value="">Select competition</option>
                                 <option value="IPhO">IPhO</option>
                                 <option value="USAPhO">USAPhO</option>
-                                <option value="JPhO">JPhO</option>
+                                <option value="PanPhO">PanPhO</option>
                             </select>
                         </div>
                         
