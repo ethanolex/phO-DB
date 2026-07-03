@@ -28,26 +28,74 @@ import {
 } from 'firebase/firestore';
 import axios from 'axios';
 
-// Your Firebase configuration object
+// DEBUG: Log all environment variables (remove this in production)
+console.log('Environment variables loaded:');
+console.log('VITE_FIREBASE_API_KEY:', import.meta.env.VITE_FIREBASE_API_KEY ? '✓ Present' : '✗ Missing');
+console.log('VITE_FIREBASE_AUTH_DOMAIN:', import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ? '✓ Present' : '✗ Missing');
+console.log('VITE_FIREBASE_PROJECT_ID:', import.meta.env.VITE_FIREBASE_PROJECT_ID ? '✓ Present' : '✗ Missing');
+console.log('VITE_FIREBASE_STORAGE_BUCKET:', import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ? '✓ Present' : '✗ Missing');
+console.log('VITE_FIREBASE_MESSAGING_SENDER_ID:', import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ? '✓ Present' : '✗ Missing');
+console.log('VITE_FIREBASE_APP_ID:', import.meta.env.VITE_FIREBASE_APP_ID ? '✓ Present' : '✗ Missing');
+console.log('VITE_MATHPIX_APP_ID:', import.meta.env.VITE_MATHPIX_APP_ID ? '✓ Present' : '✗ Missing');
+console.log('VITE_MATHPIX_API_KEY:', import.meta.env.VITE_MATHPIX_API_KEY ? '✓ Present' : '✗ Missing');
+
+// Your Firebase configuration object - USING VITE ENVIRONMENT VARIABLES
 const firebaseConfig = {
-    apiKey: "********",
-    authDomain: "********",
-    projectId: "********",
-    storageBucket: "********",
-    messagingSenderId: "********",
-    appId: "********",
-    measurementId: "********"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const storage = getStorage(app);
-const db = getFirestore(app);
+console.log('Firebase Config loaded');
 
-// Mathpix API Configuration
-const MATHpIX_APP_ID = '********'; // Replace with your Mathpix App ID
-const MATHpIX_API_KEY = '********'; // Replace with your Mathpix API Key
+// Validate that all required environment variables are set
+const requiredEnvVars = [
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_AUTH_DOMAIN',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_STORAGE_BUCKET',
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+    'VITE_FIREBASE_APP_ID'
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !import.meta.env[varName]);
+if (missingEnvVars.length > 0) {
+    console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
+    console.error('Please check your .env file and ensure all required variables are set.');
+    console.error('Make sure your .env file is in the root directory of your project.');
+    console.error('And remember to restart the dev server after creating/updating .env');
+}
+
+// Initialize Firebase
+let app, auth, storage, db;
+try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    storage = getStorage(app);
+    db = getFirestore(app);
+    console.log('✅ Firebase initialized successfully!');
+} catch (error) {
+    console.error('❌ Failed to initialize Firebase:', error);
+    // Re-throw to stop the app from loading with invalid config
+    throw error;
+}
+
+// Mathpix API Configuration - USING VITE ENVIRONMENT VARIABLES
+const MATHpIX_APP_ID = import.meta.env.VITE_MATHPIX_APP_ID;
+const MATHpIX_API_KEY = import.meta.env.VITE_MATHPIX_API_KEY;
+
+// Check if Mathpix credentials are configured
+const isMathpixConfigured = MATHpIX_APP_ID && MATHpIX_API_KEY && 
+    MATHpIX_APP_ID !== 'your_mathpix_app_id' && 
+    MATHpIX_API_KEY !== 'your_mathpix_api_key';
+
+if (!isMathpixConfigured) {
+    console.warn('⚠️ Mathpix API credentials not configured. Please add VITE_MATHPIX_APP_ID and VITE_MATHPIX_API_KEY to your .env file.');
+}
 
 // Authentication functions
 export const registerUser = async (email, password, displayName) => {
@@ -158,7 +206,6 @@ const fileToBase64 = (file) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = () => {
-            // Remove the data URL prefix (e.g., "data:image/png;base64,")
             const base64String = reader.result.split(',')[1];
             resolve(base64String);
         };
@@ -178,10 +225,9 @@ const uploadToTempStorage = async (file) => {
     }
 };
 
-// FIXED: Mathpix API function that uses URL instead of base64
+// Mathpix API function
 export const convertToLatex = async (file) => {
     try {
-        // Validate file
         if (!file) {
             return {
                 success: false,
@@ -189,29 +235,25 @@ export const convertToLatex = async (file) => {
             };
         }
 
-        // Check if Mathpix credentials are set
-        if (MATHpIX_APP_ID === 'your_mathpix_app_id' || MATHpIX_API_KEY === 'your_mathpix_api_key') {
+        if (!isMathpixConfigured) {
             return {
                 success: false,
-                error: 'Mathpix API credentials not configured. Please set your App ID and API Key.'
+                error: 'Mathpix API credentials not configured. Please check your environment variables.'
             };
         }
 
         console.log('Converting file:', file.name, 'Type:', file.type, 'Size:', file.size);
 
-        // Step 1: Upload file to temporary Firebase Storage to get a URL
         console.log('Uploading to temporary storage to get URL...');
         const fileUrl = await uploadToTempStorage(file);
         console.log('File uploaded to:', fileUrl);
 
-        // Step 2: Prepare the request for Mathpix API v3
-        // The Mathpix v3 API expects a URL in the request body
         let requestData = {};
         let endpoint = 'https://api.mathpix.com/v3/text';
 
         if (file.type === 'application/pdf') {
             requestData = {
-                url: fileUrl, // Use URL instead of base64
+                url: fileUrl,
                 formats: ['latex', 'text'],
                 math_inline_delimiters: ['$', '$'],
                 math_display_delimiters: ['$$', '$$'],
@@ -223,7 +265,7 @@ export const convertToLatex = async (file) => {
             };
         } else if (file.type.startsWith('image/')) {
             requestData = {
-                url: fileUrl, // Use URL instead of base64
+                url: fileUrl,
                 formats: ['latex', 'text'],
                 math_inline_delimiters: ['$', '$'],
                 math_display_delimiters: ['$$', '$$'],
@@ -238,7 +280,6 @@ export const convertToLatex = async (file) => {
         }
 
         console.log('Sending request to Mathpix API with URL...');
-        console.log('Request data:', JSON.stringify(requestData, null, 2));
         
         const response = await axios.post(
             endpoint,
@@ -249,20 +290,17 @@ export const convertToLatex = async (file) => {
                     'app_key': MATHpIX_API_KEY,
                     'Content-Type': 'application/json'
                 },
-                timeout: 60000 // 60 second timeout for URL processing
+                timeout: 60000
             }
         );
 
         console.log('Mathpix API Response Status:', response.status);
-        console.log('Full Mathpix API Response:', JSON.stringify(response.data, null, 2));
 
-        // Check if we got a successful response
         if (response.status === 200 && response.data) {
             let latexText = '';
             let plainText = '';
             let confidence = 0;
 
-            // Extract LaTeX from various possible response formats
             if (response.data.latex) {
                 if (Array.isArray(response.data.latex)) {
                     latexText = response.data.latex.join('\n\n');
@@ -271,7 +309,6 @@ export const convertToLatex = async (file) => {
                 }
             }
 
-            // Try result field
             if (!latexText && response.data.result) {
                 if (Array.isArray(response.data.result)) {
                     latexText = response.data.result.join('\n\n');
@@ -280,7 +317,6 @@ export const convertToLatex = async (file) => {
                 }
             }
 
-            // Try text field
             if (response.data.text) {
                 if (Array.isArray(response.data.text)) {
                     plainText = response.data.text.join('\n\n');
@@ -289,14 +325,11 @@ export const convertToLatex = async (file) => {
                 }
             }
 
-            // Try confidence
             if (response.data.confidence) {
                 confidence = response.data.confidence;
             }
 
-            // If we have LaTeX or text, consider it a success
             if (latexText || plainText) {
-                console.log('Successfully extracted content. LaTeX length:', latexText.length);
                 return {
                     success: true,
                     latex: latexText || plainText || 'No content extracted',
