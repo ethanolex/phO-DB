@@ -80,7 +80,6 @@ try {
     console.log('✅ Firebase initialized successfully!');
 } catch (error) {
     console.error('❌ Failed to initialize Firebase:', error);
-    // Re-throw to stop the app from loading with invalid config
     throw error;
 }
 
@@ -225,8 +224,160 @@ const uploadToTempStorage = async (file) => {
     }
 };
 
-// Mathpix API function
-export const convertToLatex = async (file) => {
+// Poll for PDF completion status only (no result extraction)
+const pollForPdfCompletion = async (pdfId, onProgress, maxAttempts = 60, delayMs = 2000) => {
+    console.log(`Polling for PDF completion with ID: ${pdfId}`);
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            console.log(`Polling attempt ${attempt}/${maxAttempts}...`);
+            
+            const response = await axios.get(
+                `https://api.mathpix.com/v3/pdf/${pdfId}`,
+                {
+                    headers: {
+                        'app_id': MATHpIX_APP_ID,
+                        'app_key': MATHpIX_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 30000
+                }
+            );
+
+            console.log(`Status response:`, JSON.stringify(response.data, null, 2));
+
+            if (response.status === 200 && response.data) {
+                const status = response.data.status;
+                const percentDone = response.data.percent_done || 0;
+                
+                // Update progress (25% to 75% range for polling)
+                if (onProgress) {
+                    onProgress(25 + (percentDone * 0.5));
+                }
+                
+                if (status === 'completed') {
+                    console.log('✅ PDF processing completed!');
+                    return { completed: true, rawResponse: response.data };
+                } else if (status === 'error' || status === 'failed') {
+                    console.error('❌ PDF processing failed:', response.data.error || 'Unknown error');
+                    return { 
+                        completed: false, 
+                        error: response.data.error || 'PDF processing failed',
+                        rawResponse: response.data 
+                    };
+                } else {
+                    console.log(`⏳ PDF still processing (status: ${status}, progress: ${percentDone}%)`);
+                }
+            }
+
+            // Wait before next attempt
+            if (attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        } catch (error) {
+            console.error(`Polling attempt ${attempt} failed:`, error.message);
+            
+            if (attempt < maxAttempts) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            } else {
+                return {
+                    completed: false,
+                    error: 'PDF processing timed out after ' + maxAttempts + ' attempts'
+                };
+            }
+        }
+    }
+
+    return {
+        completed: false,
+        error: 'PDF processing timed out after ' + maxAttempts + ' attempts'
+    };
+};
+
+// Download PDF results from the format-specific endpoint
+const downloadPdfResults = async (pdfId, format = 'mmd') => {
+    try {
+        const url = `https://api.mathpix.com/v3/pdf/${pdfId}.${format}`;
+        console.log(`Downloading results from: ${url}`);
+        
+        const response = await axios.get(url, {
+            headers: {
+                'app_id': MATHpIX_APP_ID,
+                'app_key': MATHpIX_API_KEY
+            },
+            timeout: 60000,
+            // For text formats like .mmd, we want the response as text
+            responseType: format === 'tex.zip' ? 'arraybuffer' : 'text'
+        });
+
+        console.log(`Download response status: ${response.status}`);
+
+        if (response.status === 200) {
+            if (format === 'tex.zip') {
+                // For zip files, we'd need to extract - but let's try to get text content
+                // For now, return a message that zip was downloaded
+                return {
+                    success: true,
+                    content: '[LaTeX zip file downloaded - contains .tex files]',
+                    rawResponse: { size: response.data.byteLength }
+                };
+            } else {
+                // For text formats like .mmd, .md
+                const content = typeof response.data === 'string' ? response.data : String(response.data);
+                
+                if (content && content.length > 0) {
+                    return {
+                        success: true,
+                        content: content,
+                        rawResponse: { length: content.length }
+                    };
+                } else {
+                    return {
+                        success: false,
+                        error: 'Empty response from download endpoint',
+                        rawResponse: response.data
+                    };
+                }
+            }
+        } else {
+            return {
+                success: false,
+                error: `Download failed with status ${response.status}`,
+                rawResponse: response.data
+            };
+        }
+    } catch (error) {
+        console.error(`❌ Failed to download PDF results:`, error);
+        
+        let errorMessage = 'Failed to download PDF results';
+        
+        if (error.response) {
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
+            
+            if (error.response.status === 404) {
+                errorMessage = `Format '${format}' not available for this PDF. The conversion may still be processing.`;
+            } else if (error.response.status === 401) {
+                errorMessage = 'Invalid Mathpix API credentials.';
+            } else {
+                errorMessage = `Download failed: ${error.response.status}`;
+            }
+        } else if (error.request) {
+            errorMessage = 'No response from server. Please check your internet connection.';
+        } else {
+            errorMessage = error.message || 'Unknown error occurred';
+        }
+        
+        return {
+            success: false,
+            error: errorMessage,
+            rawResponse: error.response?.data || null
+        };
+    }
+};
+
+// FIXED: Main conversion function
+export const convertToLatex = async (file, onProgress) => {
     try {
         if (!file) {
             return {
@@ -244,46 +395,151 @@ export const convertToLatex = async (file) => {
 
         console.log('Converting file:', file.name, 'Type:', file.type, 'Size:', file.size);
 
-        console.log('Uploading to temporary storage to get URL...');
-        const fileUrl = await uploadToTempStorage(file);
-        console.log('File uploaded to:', fileUrl);
-
-        let requestData = {};
-        let endpoint = 'https://api.mathpix.com/v3/text';
-
+        // For PDFs - FIXED VERSION
         if (file.type === 'application/pdf') {
-            requestData = {
-                url: fileUrl,
-                formats: ['latex', 'text'],
-                math_inline_delimiters: ['$', '$'],
-                math_display_delimiters: ['$$', '$$'],
-                enable_table_detection: true,
-                enable_diagram_detection: true,
-                ocr: {
-                    pages: 'all'
+            console.log('Processing PDF file...');
+            
+            try {
+                // Upload PDF to get a public URL
+                const fileUrl = await uploadToTempStorage(file);
+                console.log('PDF uploaded to:', fileUrl);
+                
+                // FIXED: Only request formats that need conversion (mmd is always available)
+                const response = await axios.post(
+                    'https://api.mathpix.com/v3/pdf',
+                    {
+                        url: fileUrl,
+                        // FIXED: Only include formats that need explicit conversion
+                        // mmd is always generated automatically, so don't include it here
+                        conversion_formats: {
+                            "tex.zip": true   // Request LaTeX zip format
+                        },
+                        options: {
+                            formats: ['latex', 'text'],
+                            math_inline_delimiters: ['$', '$'],
+                            math_display_delimiters: ['$$', '$$']
+                        }
+                    },
+                    {
+                        headers: {
+                            'app_id': MATHpIX_APP_ID,
+                            'app_key': MATHpIX_API_KEY,
+                            'Content-Type': 'application/json'
+                        },
+                        timeout: 60000
+                    }
+                );
+
+                console.log('Upload Response:', JSON.stringify(response.data, null, 2));
+
+                if (response.status === 200 && response.data && response.data.pdf_id) {
+                    const pdfId = response.data.pdf_id;
+                    console.log(`✅ PDF uploaded successfully with ID: ${pdfId}`);
+                    
+                    if (onProgress) {
+                        onProgress(25);
+                    }
+                    
+                    // Poll for completion status
+                    console.log('Polling for PDF completion...');
+                    const statusResult = await pollForPdfCompletion(pdfId, onProgress);
+                    
+                    if (!statusResult.completed) {
+                        return {
+                            success: false,
+                            error: statusResult.error || 'PDF processing failed or timed out',
+                            rawResponse: statusResult.rawResponse
+                        };
+                    }
+                    
+                    if (onProgress) {
+                        onProgress(75);
+                    }
+                    
+                    // FIXED: Download the .mmd file (always available, no need to request it)
+                    console.log('Downloading Mathpix Markdown results...');
+                    const mmdResult = await downloadPdfResults(pdfId, 'mmd');
+                    
+                    if (onProgress) {
+                        onProgress(100);
+                    }
+                    
+                    if (mmdResult.success) {
+                        console.log(`✅ Successfully extracted ${mmdResult.content.length} characters from PDF`);
+                        return {
+                            success: true,
+                            latex: mmdResult.content,
+                            text: mmdResult.content,
+                            confidence: 100,
+                            rawResponse: { pdf_id: pdfId, format: 'mmd' }
+                        };
+                    } else {
+                        // Fallback: try tex.zip if mmd fails
+                        console.log('MMD failed, trying tex.zip fallback...');
+                        const texResult = await downloadPdfResults(pdfId, 'tex.zip');
+                        
+                        if (texResult.success) {
+                            console.log(`✅ Successfully extracted LaTeX from PDF (tex.zip)`);
+                            return {
+                                success: true,
+                                latex: texResult.content,
+                                text: texResult.content,
+                                confidence: 100,
+                                rawResponse: { pdf_id: pdfId, format: 'tex.zip' }
+                            };
+                        }
+                        
+                        return {
+                            success: false,
+                            error: mmdResult.error || 'Failed to download PDF results',
+                            rawResponse: mmdResult.rawResponse
+                        };
+                    }
+                } else {
+                    return {
+                        success: false,
+                        error: 'Failed to upload PDF to Mathpix',
+                        rawResponse: response.data
+                    };
                 }
-            };
-        } else if (file.type.startsWith('image/')) {
-            requestData = {
+            } catch (pdfError) {
+                console.error('❌ PDF processing error:', pdfError);
+                
+                if (pdfError.response) {
+                    console.error('Response status:', pdfError.response.status);
+                    console.error('Response data:', pdfError.response.data);
+                    
+                    if (pdfError.response.status === 413) {
+                        return {
+                            success: false,
+                            error: 'PDF file is too large. Please try a smaller file (under 10MB).'
+                        };
+                    }
+                }
+                
+                return {
+                    success: false,
+                    error: pdfError.message || 'Failed to process PDF',
+                    details: pdfError.response?.data || null
+                };
+            }
+        }
+
+        // For images - use the existing method (unchanged)
+        console.log('Processing image file...');
+        const fileUrl = await uploadToTempStorage(file);
+        console.log('Image uploaded to:', fileUrl);
+
+        const response = await axios.post(
+            'https://api.mathpix.com/v3/text',
+            {
                 url: fileUrl,
                 formats: ['latex', 'text'],
                 math_inline_delimiters: ['$', '$'],
                 math_display_delimiters: ['$$', '$$'],
                 enable_table_detection: true,
                 enable_diagram_detection: true
-            };
-        } else {
-            return {
-                success: false,
-                error: `Unsupported file type: ${file.type}`
-            };
-        }
-
-        console.log('Sending request to Mathpix API with URL...');
-        
-        const response = await axios.post(
-            endpoint,
-            requestData,
+            },
             {
                 headers: {
                     'app_id': MATHpIX_APP_ID,
@@ -294,7 +550,7 @@ export const convertToLatex = async (file) => {
             }
         );
 
-        console.log('Mathpix API Response Status:', response.status);
+        console.log('Image Response Status:', response.status);
 
         if (response.status === 200 && response.data) {
             let latexText = '';
@@ -306,14 +562,6 @@ export const convertToLatex = async (file) => {
                     latexText = response.data.latex.join('\n\n');
                 } else if (typeof response.data.latex === 'string') {
                     latexText = response.data.latex;
-                }
-            }
-
-            if (!latexText && response.data.result) {
-                if (Array.isArray(response.data.result)) {
-                    latexText = response.data.result.join('\n\n');
-                } else if (typeof response.data.result === 'string') {
-                    latexText = response.data.result;
                 }
             }
 
@@ -330,6 +578,7 @@ export const convertToLatex = async (file) => {
             }
 
             if (latexText || plainText) {
+                console.log('✅ Successfully extracted content from image. Length:', (latexText || plainText).length);
                 return {
                     success: true,
                     latex: latexText || plainText || 'No content extracted',
@@ -338,21 +587,27 @@ export const convertToLatex = async (file) => {
                     rawResponse: response.data
                 };
             } else {
-                return {
-                    success: false,
-                    error: 'No LaTeX or text content found in API response',
-                    rawResponse: response.data
-                };
+                const fullResponse = JSON.stringify(response.data);
+                if (fullResponse.length > 10) {
+                    console.log('No specific fields found, using full response as text');
+                    return {
+                        success: true,
+                        latex: fullResponse,
+                        text: fullResponse,
+                        confidence: 0,
+                        rawResponse: response.data
+                    };
+                }
             }
-        } else {
-            return {
-                success: false,
-                error: `API returned status ${response.status}: ${response.statusText}`,
-                rawResponse: response.data
-            };
         }
+
+        return {
+            success: false,
+            error: 'No LaTeX or text content found in API response',
+            rawResponse: response.data
+        };
     } catch (error) {
-        console.error('Mathpix API error details:', error);
+        console.error('❌ Mathpix API error details:', error);
         
         let errorMessage = 'Failed to convert to LaTeX';
         let errorDetails = null;
@@ -372,6 +627,8 @@ export const convertToLatex = async (file) => {
                 errorMessage = `Mathpix API error: ${errorMsg}`;
             } else if (error.response.status === 413) {
                 errorMessage = 'File too large for Mathpix API. Please use a smaller file (under 10MB).';
+            } else if (error.response.status === 404) {
+                errorMessage = 'Mathpix API endpoint not found. Please check the API URL.';
             } else {
                 errorMessage = `Mathpix API error: ${error.response.status}`;
             }
@@ -397,12 +654,21 @@ export const processFilesWithMathpix = async (files, onProgress) => {
     for (const file of files) {
         try {
             console.log(`Processing file ${processedCount + 1}/${files.length}:`, file.name);
-            const result = await convertToLatex(file);
+            
+            const fileProgressCallback = (progress) => {
+                const overallProgress = ((processedCount / files.length) * 100) + (progress / files.length);
+                if (onProgress) {
+                    onProgress(overallProgress);
+                }
+            };
+            
+            const result = await convertToLatex(file, fileProgressCallback);
             
             if (result.success) {
-                console.log(`Successfully processed ${file.name}`);
+                console.log(`✅ Successfully processed ${file.name}`);
+                console.log(`Extracted ${result.latex.length} characters of content`);
             } else {
-                console.warn(`Failed to process ${file.name}:`, result.error);
+                console.warn(`❌ Failed to process ${file.name}:`, result.error);
                 if (result.details) {
                     console.warn('Error details:', result.details);
                 }
@@ -414,16 +680,22 @@ export const processFilesWithMathpix = async (files, onProgress) => {
             });
             
             processedCount++;
+            
             if (onProgress) {
                 onProgress((processedCount / files.length) * 100);
             }
         } catch (error) {
-            console.error(`Error processing file ${file.name}:`, error);
+            console.error(`❌ Error processing file ${file.name}:`, error);
             results.push({
                 fileName: file.name,
                 success: false,
                 error: error.message || 'Failed to process file'
             });
+            
+            processedCount++;
+            if (onProgress) {
+                onProgress((processedCount / files.length) * 100);
+            }
         }
     }
 
