@@ -668,6 +668,7 @@ const App = () => {
     }, [loginUser, registerUser, resetPassword, setCurrentPage]);
     
     // Contribute Page Component - Updated with Mathpix integration
+    // Contribute Page Component - Updated with additional fields
     const ContributePage = useCallback(() => {
         const { currentUser } = useAuth();
         const [formData, setFormData] = useState({
@@ -676,6 +677,8 @@ const App = () => {
             difficulty: '',
             topic: '',
             year: '',
+            problemSource: '', // New field
+            subtags: [], // New field for multiple subtags
             problemFiles: [],
             solutionFiles: []
         });
@@ -695,9 +698,31 @@ const App = () => {
             solution: ''
         });
         const [showLatexPreview, setShowLatexPreview] = useState(false);
+        const [subtagInput, setSubtagInput] = useState(''); // For adding new subtags
         
         const problemFileInputRef = useRef(null);
         const solutionFileInputRef = useRef(null);
+        
+        // Predefined list of common subtags for suggestions
+        const suggestedSubtags = [
+            // Mechanics
+            "Newton's Laws", "Kinematics", "Dynamics", "Work & Energy", "Momentum", "Rotational Motion",
+            "Simple Harmonic Motion", "Oscillations", "Waves", "Gravitation", "Fluid Mechanics",
+            // Electromagnetism
+            "Electrostatics", "Electric Fields", "Magnetic Fields", "Electromagnetic Induction",
+            "Circuit Analysis", "AC Circuits", "Maxwell's Equations", "Electromagnetic Waves",
+            // Thermodynamics
+            "Kinetic Theory", "Thermodynamic Cycles", "Heat Transfer", "Thermal Expansion",
+            "Entropy", "Statistical Mechanics", "Phase Transitions",
+            // Optics
+            "Geometrical Optics", "Wave Optics", "Interference", "Diffraction", "Polarization",
+            "Optical Instruments", "Photometry",
+            // Modern Physics
+            "Quantum Mechanics", "Atomic Physics", "Nuclear Physics", "Particle Physics",
+            "Relativity", "Photoelectric Effect", "Matter Waves", "Radioactivity",
+            // Math & General
+            "Vectors", "Calculus", "Complex Numbers", "Numerical Methods", "Error Analysis"
+        ];
         
         if (!currentUser) {
             return (
@@ -747,6 +772,40 @@ const App = () => {
             }));
         };
         
+        // Handle subtag addition
+        const addSubtag = (subtag) => {
+            const trimmedSubtag = subtag.trim();
+            if (trimmedSubtag && !formData.subtags.includes(trimmedSubtag)) {
+                setFormData(prev => ({
+                    ...prev,
+                    subtags: [...prev.subtags, trimmedSubtag]
+                }));
+            }
+            setSubtagInput('');
+        };
+        
+        // Handle subtag removal
+        const removeSubtag = (subtagToRemove) => {
+            setFormData(prev => ({
+                ...prev,
+                subtags: prev.subtags.filter(tag => tag !== subtagToRemove)
+            }));
+        };
+        
+        // Handle Enter key for subtag input
+        const handleSubtagKeyDown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addSubtag(subtagInput);
+            } else if (e.key === 'Backspace' && subtagInput === '' && formData.subtags.length > 0) {
+                // Remove the last subtag when backspace is pressed on empty input
+                setFormData(prev => ({
+                    ...prev,
+                    subtags: prev.subtags.slice(0, -1)
+                }));
+            }
+        };
+        
         const handlePreviewLatex = async (type) => {
             const files = type === 'problem' ? formData.problemFiles : formData.solutionFiles;
             if (files.length === 0) {
@@ -792,6 +851,13 @@ const App = () => {
             
             if (formData.solutionFiles.length === 0) {
                 setUploadError('Please upload at least one solution file.');
+                setIsSubmitting(false);
+                return;
+            }
+            
+            // Validate problem source
+            if (!formData.problemSource.trim()) {
+                setUploadError('Please enter the problem source (e.g., T3, IPhO 2023).');
                 setIsSubmitting(false);
                 return;
             }
@@ -868,6 +934,8 @@ const App = () => {
                     difficulty: formData.difficulty,
                     topic: formData.topic,
                     year: parseInt(formData.year) || null,
+                    problemSource: formData.problemSource, // New field
+                    subtags: formData.subtags, // New field
                     problemStatementUrls: problemUrls,
                     solutionUrls: solutionUrls,
                     problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
@@ -923,6 +991,8 @@ const App = () => {
                             difficulty: '',
                             topic: '',
                             year: '',
+                            problemSource: '',
+                            subtags: [],
                             problemFiles: [],
                             solutionFiles: []
                         });
@@ -1055,6 +1125,21 @@ const App = () => {
                             />
                         </div>
                         
+                        {/* New: Problem Source Field */}
+                        <div className="form-group full-width">
+                            <label>Problem Source *</label>
+                            <input
+                                type="text"
+                                name="problemSource"
+                                value={formData.problemSource}
+                                onChange={handleChange}
+                                placeholder="e.g., T3, IPhO 2023, Halliday Chapter 5"
+                                required
+                                disabled={isSubmitting}
+                            />
+                            <small className="field-hint">Specify the source of this problem (textbook, competition, year, etc.)</small>
+                        </div>
+                        
                         <div className="form-group">
                             <label>Competition *</label>
                             <select name="competition" value={formData.competition} onChange={handleChange} required disabled={isSubmitting}>
@@ -1062,6 +1147,8 @@ const App = () => {
                                 <option value="IPhO">IPhO</option>
                                 <option value="USAPhO">USAPhO</option>
                                 <option value="PanPhO">PanPhO</option>
+                                <option value="JPhO">JPhO</option>
+                                <option value="Others">Others</option>
                             </select>
                         </div>
                         
@@ -1084,6 +1171,7 @@ const App = () => {
                                 <option value="Electromagnetism">Electromagnetism</option>
                                 <option value="Optics">Optics</option>
                                 <option value="Modern Physics">Modern Physics</option>
+                                <option value="Others">Others</option>
                             </select>
                         </div>
                         
@@ -1099,6 +1187,71 @@ const App = () => {
                                 max="2025"
                                 disabled={isSubmitting}
                             />
+                        </div>
+                        
+                        {/* New: Subtags Section */}
+                        <div className="form-group full-width">
+                            <label>Subtags</label>
+                            <div className="subtags-container">
+                                <div className="subtag-input-wrapper">
+                                    <div className="subtags-list">
+                                        {formData.subtags.map((tag) => (
+                                            <span key={tag} className="subtag-tag">
+                                                {tag}
+                                                <button 
+                                                    type="button"
+                                                    className="subtag-remove"
+                                                    onClick={() => removeSubtag(tag)}
+                                                    disabled={isSubmitting}
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        ))}
+                                        <input
+                                            type="text"
+                                            value={subtagInput}
+                                            onChange={(e) => setSubtagInput(e.target.value)}
+                                            onKeyDown={handleSubtagKeyDown}
+                                            placeholder={formData.subtags.length === 0 ? "Type a subtag and press Enter" : "Add another subtag..."}
+                                            className="subtag-input"
+                                            disabled={isSubmitting}
+                                            style={{ 
+                                                flex: 1, 
+                                                minWidth: '150px',
+                                                border: 'none',
+                                                outline: 'none',
+                                                padding: '8px',
+                                                fontSize: '14px'
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                                
+                                {/* Suggested subtags */}
+                                {formData.subtags.length < 10 && (
+                                    <div className="suggested-subtags">
+                                        <small>Suggested subtags:</small>
+                                        <div className="suggested-tags-list">
+                                            {suggestedSubtags
+                                                .filter(tag => !formData.subtags.includes(tag))
+                                                .slice(0, 12)
+                                                .map((tag) => (
+                                                    <button
+                                                        key={tag}
+                                                        type="button"
+                                                        className="suggested-tag-btn"
+                                                        onClick={() => addSubtag(tag)}
+                                                        disabled={isSubmitting}
+                                                    >
+                                                        {tag}
+                                                    </button>
+                                                ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                            <small className="field-hint">Add relevant subtags (e.g., Newton's Laws, Simple Harmonic Motion). Press Enter to add.</small>
                         </div>
                         
                         {/* File Upload for Problem Statement */}
