@@ -8,45 +8,344 @@ import {
     uploadProblemFiles,
     processFilesWithMathpix,
     convertToLatex,
-    extractAndUploadMathpixAssets // <-- ADDED IMPORT
+    extractAndUploadMathpixAssets,
+    fetchProblemsFromFirestore
 } from './firebase';
 import './App.css';
+import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import 'katex/dist/katex.min.css';
+import remarkGfm from 'remark-gfm';
+
+// Process figures
+const processFigures = (text) => {
+  if (!text) return '';
+  
+  const figureRegex = /\\begin\{figure\}([\s\S]*?)\\end\{figure\}/g;
+  
+  return text.replace(figureRegex, (match, content) => {
+    const imgMatch = content.match(/\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/);
+    if (!imgMatch) return '';
+    
+    let imgUrl = imgMatch[1].trim();
+    
+    let caption = '';
+    const captionMatch = content.match(/\\caption\{([\s\S]*)\}/);
+    if (captionMatch) {
+      caption = captionMatch[1];
+      let depth = 1;
+      let i = 0;
+      while (i < content.length && depth > 0) {
+        if (content[i] === '{') depth++;
+        else if (content[i] === '}') depth--;
+        i++;
+      }
+      const captionStart = content.indexOf('\\caption{') + 9;
+      caption = content.slice(captionStart, captionStart + i - captionStart - 1);
+    }
+    
+    const encodedUrl = imgUrl.replace(/&/g, '&amp;');
+    
+    const processedCaption = caption
+      .replace(/\\\[(.*?)\\\]/gs, '$$$$${1}$$$$')
+      .replace(/\\\((.*?)\\\)/gs, '$${1}$$');
+    
+    return `\n<figure style="text-align: center; margin: 2em 0;">
+  <img src="${encodedUrl}" alt="Figure" style="max-width: 100%; height: auto; border-radius: 4px;" />
+  ${processedCaption ? `<figcaption style="font-size: 0.95em; color: #444; margin-top: 0.75em;">${processedCaption}</figcaption>` : ''}
+</figure>\n`;
+  });
+};
+
+// Convert LaTeX tabular to Markdown table
+const convertTabularToMarkdown = (text) => {
+  if (!text) return text;
+
+  let result = text;
+  
+  // Find all tabular environments
+  const tabularRegex = /\\begin\{tabular\}\{([^}]*)\}([\s\S]*?)\\end\{tabular\}/g;
+  
+  result = result.replace(tabularRegex, (match, colSpec, content) => {
+    // Clean the content
+    let cleanContent = content;
+    
+    // Remove \hline
+    cleanContent = cleanContent.replace(/\\hline/g, '');
+    
+    // Handle nested tabulars - convert to multiline text
+    cleanContent = cleanContent.replace(/\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/g, (nestedMatch, nestedContent) => {
+      let nestedClean = nestedContent.replace(/\\hline/g, '');
+      // Replace \\ with <br> for line breaks
+      nestedClean = nestedClean.replace(/\\\\/g, '<br>');
+      nestedClean = nestedClean.trim();
+      return nestedClean;
+    });
+    
+    // Handle array environments within cells
+    cleanContent = cleanContent.replace(/\\begin\{array\}\{[^}]*\}([\s\S]*?)\\end\{array\}/g, (arrayMatch, arrayContent) => {
+      // Replace \\ with <br> for line breaks
+      let arrayClean = arrayContent.replace(/\\\\/g, '<br>');
+      arrayClean = arrayClean.trim();
+      return arrayClean;
+    });
+    
+    // Split into rows
+    const rows = cleanContent.split(/\\\\/).map(row => row.trim()).filter(row => row);
+    
+    if (rows.length === 0) return '';
+    
+    // Check if this is a single-column table or multi-column
+    const isSingleColumn = !rows[0].includes('&');
+    
+    if (isSingleColumn) {
+      // For single column tables, just render as a block with line breaks
+      const processedRows = rows.map(row => {
+        // Convert math expressions
+        let processed = row
+          .replace(/\\\((.*?)\\\)/g, '$$$1$')
+          .replace(/\\\[(.*?)\\\]/g, '$$$$1$$$')
+          .replace(/\\text\{([^}]*)\}/g, '$1');
+        return processed;
+      });
+      // Return as a div with line breaks
+      return `<div style="margin: 1em 0; padding: 0.5em; background: #f8fafc; border-radius: 0.5rem; border: 1px solid #e5e7eb;">${processedRows.join('<br>')}</div>`;
+    }
+    
+    // For multi-column tables, build Markdown table
+    const markdownRows = rows.map(row => {
+      // Split cells by &, but be careful with nested braces
+      const cells = [];
+      let currentCell = '';
+      let braceDepth = 0;
+      let inMath = false;
+      
+      for (let i = 0; i < row.length; i++) {
+        const char = row[i];
+        
+        if (char === '{') braceDepth++;
+        else if (char === '}') braceDepth--;
+        
+        // Track math mode
+        if (char === '$' && braceDepth === 0) {
+          inMath = !inMath;
+        }
+        if (char === '\\' && row[i+1] === '(' && braceDepth === 0) {
+          inMath = true;
+        }
+        if (char === '\\' && row[i+1] === ')' && braceDepth === 0) {
+          inMath = false;
+        }
+        
+        if (char === '&' && braceDepth === 0 && !inMath) {
+          cells.push(currentCell.trim());
+          currentCell = '';
+        } else {
+          currentCell += char;
+        }
+      }
+      if (currentCell.trim()) {
+        cells.push(currentCell.trim());
+      }
+      
+      // Process each cell - convert math expressions
+      const processedCells = cells.map(cell => {
+        let processed = cell
+          .replace(/\\\((.*?)\\\)/g, '$$$1$')
+          .replace(/\\\[(.*?)\\\]/g, '$$$$1$$$')
+          .replace(/\\text\{([^}]*)\}/g, '$1')
+          .replace(/\\varepsilon/g, 'ε');
+        return processed;
+      });
+      
+      return '| ' + processedCells.join(' | ') + ' |';
+    });
+    
+    // Determine number of columns from first row
+    const numCols = rows[0].split('&').length;
+    
+    // Create separator row
+    const separatorRow = '| ' + Array(numCols).fill('---').join(' | ') + ' |';
+    
+    // Insert separator after first row
+    markdownRows.splice(1, 0, separatorRow);
+    
+    return markdownRows.join('\n');
+  });
+  
+  return result;
+};
+
+// Preprocess Mathpix content
+const preprocessMathpix = (text) => {
+  if (!text) return '';
+  let processed = text;
+
+  // 1. Process Figures
+  processed = processFigures(processed);
+
+  // 2. Convert tabulars to markdown tables BEFORE ReactMarkdown
+  processed = convertTabularToMarkdown(processed);
+
+  // 3. Convert remaining block math
+  processed = processed.replace(/\\\[(.*?)\\\]/gs, (match, p1) => `\n$$\n${p1}\n$$\n`);
+
+  // 4. Convert remaining inline math
+  processed = processed.replace(/\\\((.*?)\\\)/gs, (match, p1) => ` $${p1}$ `);
+
+  // 5. Convert sections
+  processed = processed.replace(/\\section\*\{([^}]+)\}/g, (match, p1) => `\n### ${p1}\n`);
+
+  // 6. Fix common Mathpix issues
+  processed = processed.replace(/\\text\{([^}]*)\}/g, (match, text) => {
+    // Keep text as is, but ensure it's properly rendered
+    return text;
+  });
+
+  return processed;
+};
+
+// MathpixContent component - let ReactMarkdown handle everything
+const MathpixContent = ({ content, className = '' }) => {
+  if (!content) return null;
+  
+  const normalizedContent = preprocessMathpix(content);
+  
+  return (
+    <div className={`mathpix-content ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkMath, remarkGfm]}
+        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        components={{
+          // Custom table rendering for better styling
+          table: ({ node, ...props }) => (
+            <div style={{ overflowX: 'auto', margin: '1em 0' }}>
+              <table 
+                style={{ 
+                  borderCollapse: 'collapse', 
+                  width: '100%', 
+                  fontSize: '0.95em',
+                  border: '1px solid #d1d5db'
+                }} 
+                {...props} 
+              />
+            </div>
+          ),
+          th: ({ node, ...props }) => (
+            <th 
+              style={{ 
+                border: '1px solid #d1d5db', 
+                padding: '8px 12px',
+                backgroundColor: '#f8fafc',
+                fontWeight: 600,
+                textAlign: 'center'
+              }} 
+              {...props} 
+            />
+          ),
+          td: ({ node, ...props }) => (
+            <td 
+              style={{ 
+                border: '1px solid #d1d5db', 
+                padding: '8px 12px',
+                textAlign: 'center',
+                verticalAlign: 'middle'
+              }} 
+              {...props} 
+            />
+          ),
+          tr: ({ node, ...props }) => (
+            <tr {...props} />
+          ),
+          p: ({ node, ...props }) => <p style={{ margin: '0.5em 0', lineHeight: '1.6' }} {...props} />,
+          // Handle inline HTML that might contain <br> tags
+          br: ({ node, ...props }) => <br {...props} />,
+        }}
+      >
+        {normalizedContent}
+      </ReactMarkdown>
+    </div>
+  );
+};
+
+// [The rest of your App component remains exactly the same...]
 
 const App = () => {
     const [currentPage, setCurrentPage] = useState('database');
     const { currentUser, loading: authLoading, logout, error: authError, setError } = useAuth();
     
-    const questionsDB = [
-        { id: 1, competition: "IPhO", difficulty: "Hard", topic: "Mechanics", title: "Rolling Spool on Incline", text: "A spool of mass M and moment of inertia I rolls without slipping on an inclined plane. Find acceleration of its center of mass.", year: 2019, solution: "The acceleration is a = (g sin θ) / (1 + I/(MR²)). For a solid cylinder, I = ½MR², so a = (2/3)g sin θ." },
-        { id: 2, competition: "IPhO", difficulty: "Hard", topic: "Thermodynamics", title: "Carnot Cycle with Real Gas", text: "Analyze efficiency of a Carnot engine using van der Waals gas. Derive expression for work done.", year: 2020, solution: "The efficiency remains η = 1 - T_c/T_h, as it depends only on temperatures for a reversible cycle." },
-        { id: 3, competition: "IPhO", difficulty: "Medium", topic: "Electromagnetism", title: "Charged Ring Oscillations", text: "A charged particle moves along axis of a uniformly charged ring. Find frequency of small oscillations.", year: 2018, solution: "ω = √(kQq/(mR³)) where Q is ring charge, q is particle charge, R is ring radius." },
-        { id: 4, competition: "JPhO", difficulty: "Easy", topic: "Optics", title: "Refraction in Prism", text: "A ray enters a prism of refractive index 1.5 at grazing incidence. Find deviation angle.", year: 2021, solution: "δ = 180° - 2A, where A is prism angle. For minimum deviation, δ_min = 2 sin⁻¹(n sin(A/2)) - A." },
-        { id: 5, competition: "USAPhO", difficulty: "Hard", topic: "Modern Physics", title: "Photoelectric Effect Threshold", text: "When light of wavelength 200 nm hits a metal, stopping potential is 2V. Find work function.", year: 2017, solution: "φ = hc/λ - eV_stop = (1240 eV·nm)/(200 nm) - 2 eV = 6.2 eV - 2 eV = 4.2 eV" },
-        { id: 6, competition: "JPhO", difficulty: "Medium", topic: "Mechanics", title: "Pulley System Dynamics", text: "Two masses connected by string over pulley, one on rough table. Find acceleration.", year: 2020, solution: "a = (m₂g - μ m₁g)/(m₁ + m₂) for m₂ hanging vertically." },
-        { id: 7, competition: "USAPhO", difficulty: "Medium", topic: "Electromagnetism", title: "RC Circuit Transient", text: "Capacitor initially charged, discharges through resistor R. Derive voltage decay.", year: 2019, solution: "V(t) = V₀ e^{-t/RC}, time constant τ = RC." },
-        { id: 8, competition: "IPhO", difficulty: "Hard", topic: "Optics", title: "Diffraction Grating Resolution", text: "A grating with 600 lines/mm is used to resolve sodium doublet. Find minimum width.", year: 2016, solution: "R = λ/Δλ = Nm, so N = λ/(mΔλ). For sodium doublet, λ ≈ 589 nm, Δλ = 0.6 nm." },
-        { id: 9, competition: "JPhO", difficulty: "Easy", topic: "Thermodynamics", title: "Ideal Gas Expansion", text: "One mole of ideal gas expands isothermally from V1 to V2. Compute heat absorbed.", year: 2022, solution: "Q = W = nRT ln(V₂/V₁)" },
-        { id: 10, competition: "USAPhO", difficulty: "Hard", topic: "Modern Physics", title: "Bohr Model for Muonic Atom", text: "Muon replaces electron in hydrogen. Find ground state energy and radius.", year: 2021, solution: "E_n = - (μ e⁴)/(8ε₀² h² n²), r_n = (4πε₀ h² n²)/(μ e²), where μ is reduced mass." },
-        { id: 11, competition: "IPhO", difficulty: "Medium", topic: "Electromagnetism", title: "Magnetic Field of Solenoid", text: "Long solenoid with n turns per meter carries current I. Find field inside and inductance per unit length.", year: 2015, solution: "B = μ₀nI, L/l = μ₀n²A" },
-        { id: 12, competition: "JPhO", difficulty: "Easy", topic: "Mechanics", title: "Projectile on Incline", text: "Projectile launched from incline hits incline again. Find range along incline.", year: 2019, solution: "R = (2v₀² sin θ cos(θ-α))/(g cos²α)" },
-        { id: 13, competition: "USAPhO", difficulty: "Medium", topic: "Thermodynamics", title: "Entropy Change of Mixing", text: "Two gases separated by partition, after removal find entropy change.", year: 2020, solution: "ΔS = n₁R ln((V₁+V₂)/V₁) + n₂R ln((V₁+V₂)/V₂)" },
-        { id: 14, competition: "IPhO", difficulty: "Hard", topic: "Modern Physics", title: "Relativistic Doppler Shift", text: "A star moving away emits light of wavelength λ0. Observed wavelength shift formula.", year: 2017, solution: "λ_obs = λ₀ √((1+β)/(1-β)) where β = v/c" },
-        { id: 15, competition: "USAPhO", difficulty: "Easy", topic: "Optics", title: "Mirror Magnification", text: "An object placed 20cm from concave mirror (f=15cm). Find image position and magnification.", year: 2018, solution: "1/f = 1/u + 1/v → v = 60 cm, m = -v/u = -3" }
-    ];
-
-    const allCompetitions = [...new Set(questionsDB.map(q => q.competition))].sort();
-    const allDifficulties = [...new Set(questionsDB.map(q => q.difficulty))].sort((a,b) => {
-        const order = { "Easy": 1, "Medium": 2, "Hard": 3 };
-        return order[a] - order[b];
-    });
-    const allTopics = [...new Set(questionsDB.map(q => q.topic))].sort();
-
+    // State for problems from Firestore
+    const [questionsDB, setQuestionsDB] = useState([]);
+    const [loadingProblems, setLoadingProblems] = useState(true);
+    const [problemsError, setProblemsError] = useState(null);
+    
+    // State for "See More" toggles
+    const [showAllCompetitions, setShowAllCompetitions] = useState(false);
+    const [showAllTopics, setShowAllTopics] = useState(false);
+    const [showAllSubtags, setShowAllSubtags] = useState(false);
+    
+    // State for filters
     const [selectedCompetitions, setSelectedCompetitions] = useState([]);
     const [selectedDifficulties, setSelectedDifficulties] = useState([]);
     const [selectedTopics, setSelectedTopics] = useState([]);
+    const [selectedSubtags, setSelectedSubtags] = useState([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [selectedQuestion, setSelectedQuestion] = useState(null);
+    const [showRawLatex, setShowRawLatex] = useState(false);
     
+    // Fetch problems from Firestore on component mount
+    useEffect(() => {
+        const loadProblems = async () => {
+            setLoadingProblems(true);
+            setProblemsError(null);
+            try {
+                const result = await fetchProblemsFromFirestore();
+                if (result.success) {
+                    setQuestionsDB(result.problems);
+                } else {
+                    setProblemsError(result.error || 'Failed to load problems from database');
+                    setQuestionsDB([]);
+                }
+            } catch (error) {
+                console.error('Error loading problems:', error);
+                setProblemsError(error.message);
+                setQuestionsDB([]);
+            } finally {
+                setLoadingProblems(false);
+            }
+        };
+        
+        loadProblems();
+    }, []);
+
+    // Compute filter options from the loaded data
+    const allCompetitions = useMemo(() => {
+        return [...new Set(questionsDB.map(q => q.competition).filter(Boolean))].sort();
+    }, [questionsDB]);
+    
+    const allDifficulties = useMemo(() => {
+        return [...new Set(questionsDB.map(q => q.difficulty).filter(Boolean))].sort((a, b) => {
+            const order = { "Easy": 1, "Medium": 2, "Hard": 3 };
+            return (order[a] || 0) - (order[b] || 0);
+        });
+    }, [questionsDB]);
+    
+    const allTopics = useMemo(() => {
+        return [...new Set(questionsDB.map(q => q.topic).filter(Boolean))].sort();
+    }, [questionsDB]);
+
+    const allSubtags = useMemo(() => {
+        const subtagSet = new Set();
+        questionsDB.forEach(q => {
+            if (q.subtags && Array.isArray(q.subtags)) {
+                q.subtags.forEach(tag => subtagSet.add(tag));
+            }
+        });
+        return Array.from(subtagSet).sort();
+    }, [questionsDB]);
+
     const toggleFilter = useCallback((value, currentArray, setArray) => {
         if (currentArray.includes(value)) {
             setArray(currentArray.filter(v => v !== value));
@@ -59,22 +358,39 @@ const App = () => {
         setSelectedCompetitions([]);
         setSelectedDifficulties([]);
         setSelectedTopics([]);
+        setSelectedSubtags([]);
         setSearchQuery("");
     }, []);
     
     const filteredQuestions = useMemo(() => {
         let results = [...questionsDB];
-        if (selectedCompetitions.length > 0) results = results.filter(q => selectedCompetitions.includes(q.competition));
-        if (selectedDifficulties.length > 0) results = results.filter(q => selectedDifficulties.includes(q.difficulty));
-        if (selectedTopics.length > 0) results = results.filter(q => selectedTopics.includes(q.topic));
+        if (selectedCompetitions.length > 0) {
+            results = results.filter(q => selectedCompetitions.includes(q.competition));
+        }
+        if (selectedDifficulties.length > 0) {
+            results = results.filter(q => selectedDifficulties.includes(q.difficulty));
+        }
+        if (selectedTopics.length > 0) {
+            results = results.filter(q => selectedTopics.includes(q.topic));
+        }
+        if (selectedSubtags.length > 0) {
+            results = results.filter(q => {
+                if (!q.subtags || !Array.isArray(q.subtags)) return false;
+                return selectedSubtags.some(tag => q.subtags.includes(tag));
+            });
+        }
         if (searchQuery.trim() !== "") {
             const lowerQuery = searchQuery.toLowerCase();
-            results = results.filter(q => q.title.toLowerCase().includes(lowerQuery) || q.text.toLowerCase().includes(lowerQuery));
+            results = results.filter(q => 
+                q.title?.toLowerCase().includes(lowerQuery) || 
+                q.text?.toLowerCase().includes(lowerQuery) ||
+                q.problemLatex?.toLowerCase().includes(lowerQuery)
+            );
         }
         return results;
-    }, [selectedCompetitions, selectedDifficulties, selectedTopics, searchQuery]);
+    }, [questionsDB, selectedCompetitions, selectedDifficulties, selectedTopics, selectedSubtags, searchQuery]);
     
-    const activeFiltersCount = selectedCompetitions.length + selectedDifficulties.length + selectedTopics.length + (searchQuery !== "" ? 1 : 0);
+    const activeFiltersCount = selectedCompetitions.length + selectedDifficulties.length + selectedTopics.length + selectedSubtags.length + (searchQuery !== "" ? 1 : 0);
     
     const getCompetitionClass = useCallback((comp) => {
         if (comp === "IPhO") return "competition-ipho";
@@ -132,44 +448,42 @@ const App = () => {
         setCurrentPage('home');
     }, [logout]);
     
-    const SearchBox = useCallback(() => (
-        <div className="search-box">
-            <label><i className="fas fa-search"></i> Search</label>
-            <div className="search-input-wrapper">
-                <i className="fas fa-search search-icon"></i>
-                <input type="text" placeholder="Title or problem text..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="search-input" autoComplete="off" />
-            </div>
-        </div>
-    ), [searchQuery]);
-    
-    const HomePage = useCallback(() => (
-        <div className="home-page">
-            <div className="hero-section">
-                <div className="hero-content">
-                    <h1 className="hero-title">The phO Database</h1>
-                    <p className="hero-subtitle">Access a database of physics problems from olympiads and textbooks. Practice and learn from questions from <b>specific topics and competitions.</b></p>
-                    <div className="hero-buttons">
-                        <button className="hero-btn primary" onClick={() => setCurrentPage('database')}>Browse Database <i className="fas fa-arrow-right"></i></button>
-                        <button className="hero-btn secondary" onClick={() => setCurrentPage('contribute')}>Contribute Problems <i className="fas fa-plus"></i></button>
+    const HomePage = useCallback(() => {
+        const stats = {
+            problems: questionsDB.length,
+            competitions: allCompetitions.length,
+            topics: allTopics.length
+        };
+        
+        return (
+            <div className="home-page">
+                <div className="hero-section">
+                    <div className="hero-content">
+                        <h1 className="hero-title">The phO Database</h1>
+                        <p className="hero-subtitle">Access a database of physics problems from olympiads and textbooks. Practice and learn from questions from <b>specific topics and competitions.</b></p>
+                        <div className="hero-buttons">
+                            <button className="hero-btn primary" onClick={() => setCurrentPage('database')}>Browse Database <i className="fas fa-arrow-right"></i></button>
+                            <button className="hero-btn secondary" onClick={() => setCurrentPage('contribute')}>Contribute Problems <i className="fas fa-plus"></i></button>
+                        </div>
+                    </div>
+                    <div className="hero-stats">
+                        <div className="stat-card"><i className="fas fa-database"></i><div className="stat-number">{stats.problems}</div><div className="stat-label">Problems</div></div>
+                        <div className="stat-card"><i className="fas fa-trophy"></i><div className="stat-number">{stats.competitions}</div><div className="stat-label">Competitions</div></div>
+                        <div className="stat-card"><i className="fas fa-chart-line"></i><div className="stat-number">{stats.topics}</div><div className="stat-label">Topics</div></div>
                     </div>
                 </div>
-                <div className="hero-stats">
-                    <div className="stat-card"><i className="fas fa-database"></i><div className="stat-number">{questionsDB.length}</div><div className="stat-label">Problems</div></div>
-                    <div className="stat-card"><i className="fas fa-trophy"></i><div className="stat-number">3</div><div className="stat-label">Competitions</div></div>
-                    <div className="stat-card"><i className="fas fa-chart-line"></i><div className="stat-number">6</div><div className="stat-label">Topics</div></div>
+                <div className="features-section">
+                    <h2>Why Choose phO-DB?</h2>
+                    <div className="features-grid">
+                        <div className="feature-card"><i className="fas fa-search"></i><h3>Advanced Filtering</h3><p>Filter problems by competition, difficulty, topic, and search by keywords</p></div>
+                        <div className="feature-card"><i className="fas fa-lightbulb"></i><h3>Detailed Solutions</h3><p>Each problem comes with a comprehensive solution and explanation</p></div>
+                        <div className="feature-card"><i className="fas fa-users"></i><h3>Community Driven</h3><p>Contribute your own problems and help others learn</p></div>
+                        <div className="feature-card"><i className="fas fa-mobile-alt"></i><h3>Responsive Design</h3><p>Access the database from any device, anytime</p></div>
+                    </div>
                 </div>
             </div>
-            <div className="features-section">
-                <h2>Why Choose phO-DB?</h2>
-                <div className="features-grid">
-                    <div className="feature-card"><i className="fas fa-search"></i><h3>Advanced Filtering</h3><p>Filter problems by competition, difficulty, topic, and search by keywords</p></div>
-                    <div className="feature-card"><i className="fas fa-lightbulb"></i><h3>Detailed Solutions</h3><p>Each problem comes with a comprehensive solution and explanation</p></div>
-                    <div className="feature-card"><i className="fas fa-users"></i><h3>Community Driven</h3><p>Contribute your own problems and help others learn</p></div>
-                    <div className="feature-card"><i className="fas fa-mobile-alt"></i><h3>Responsive Design</h3><p>Access the database from any device, anytime</p></div>
-                </div>
-            </div>
-        </div>
-    ), [questionsDB.length]);
+        );
+    }, [questionsDB.length, allCompetitions.length, allTopics.length]);
     
     const DatabasePage = useCallback(() => {
         const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
@@ -177,6 +491,35 @@ const App = () => {
             const timer = setTimeout(() => { setSearchQuery(localSearchQuery); }, 300);
             return () => clearTimeout(timer);
         }, [localSearchQuery, setSearchQuery]);
+        
+        // Show loading state
+        if (loadingProblems) {
+            return (
+                <div className="loading-screen">
+                    <div className="loader"></div>
+                    <p>Loading problems from database...</p>
+                </div>
+            );
+        }
+        
+        // Show error state
+        if (problemsError) {
+            return (
+                <div className="error-state">
+                    <i className="fas fa-exclamation-triangle"></i>
+                    <h3>Error Loading Problems</h3>
+                    <p>{problemsError}</p>
+                    <button className="retry-btn" onClick={() => window.location.reload()}>
+                        <i className="fas fa-redo"></i> Retry
+                    </button>
+                </div>
+            );
+        }
+        
+        // Prepare visible items with "See More" logic
+        const visibleCompetitions = showAllCompetitions ? allCompetitions : allCompetitions.slice(0, 6);
+        const visibleTopics = showAllTopics ? allTopics : allTopics.slice(0, 6);
+        const visibleSubtags = showAllSubtags ? allSubtags : allSubtags.slice(0, 6);
         
         return (
             <>
@@ -186,37 +529,123 @@ const App = () => {
                             <h2><i className="fas fa-sliders-h"></i> Filters</h2>
                             {activeFiltersCount > 0 && <button onClick={clearFilters} className="reset-btn"><i className="fas fa-undo-alt"></i> Reset all</button>}
                         </div>
-                        <div className="search-box">
-                            <label><i className="fas fa-search"></i> Search</label>
-                            <div className="search-input-wrapper">
-                                <i className="fas fa-search search-icon"></i>
-                                <input type="text" placeholder="Title or problem text..." value={localSearchQuery} onChange={(e) => setLocalSearchQuery(e.target.value)} className="search-input" autoComplete="off" />
+                        
+                        <div className="sidebar-scroll">
+                            <div className="search-box">
+                                <label><i className="fas fa-search"></i> Search</label>
+                                <div className="search-input-wrapper">
+                                    <i className="fas fa-search search-icon"></i>
+                                    <input type="text" placeholder="Title or problem text..." value={localSearchQuery} onChange={(e) => setLocalSearchQuery(e.target.value)} className="search-input" autoComplete="off" />
+                                </div>
                             </div>
-                        </div>
-                        <div className="filter-group">
-                            <div className="filter-group-title"><i className="fas fa-trophy"></i> Competition</div>
-                            <div className="filter-buttons">
-                                {allCompetitions.map(comp => (
-                                    <button key={comp} onClick={() => toggleFilter(comp, selectedCompetitions, setSelectedCompetitions)} className={`filter-btn ${selectedCompetitions.includes(comp) ? 'active' : ''}`}>{comp}</button>
-                                ))}
+                            
+                            {/* Competitions Filter */}
+                            <div className="filter-group">
+                                <div className="filter-group-title">
+                                    <i className="fas fa-trophy"></i> Competition
+                                    <span className="filter-count">{allCompetitions.length}</span>
+                                </div>
+                                <div className="filter-buttons">
+                                    {visibleCompetitions.map(comp => (
+                                        <button 
+                                            key={comp} 
+                                            onClick={() => toggleFilter(comp, selectedCompetitions, setSelectedCompetitions)} 
+                                            className={`filter-btn ${selectedCompetitions.includes(comp) ? 'active' : ''}`}
+                                        >
+                                            {comp}
+                                        </button>
+                                    ))}
+                                </div>
+                                {allCompetitions.length > 6 && (
+                                    <button 
+                                        className="see-more-btn" 
+                                        onClick={() => setShowAllCompetitions(!showAllCompetitions)}
+                                    >
+                                        {showAllCompetitions ? 'See less' : `See more (${allCompetitions.length - 6})`}
+                                        <i className={`fas fa-chevron-${showAllCompetitions ? 'up' : 'down'}`}></i>
+                                    </button>
+                                )}
                             </div>
-                        </div>
-                        <div className="filter-group">
-                            <div className="filter-group-title"><i className="fas fa-chart-line"></i> Difficulty</div>
-                            <div className="filter-buttons">
-                                {allDifficulties.map(diff => (
-                                    <button key={diff} onClick={() => toggleFilter(diff, selectedDifficulties, setSelectedDifficulties)} className={`filter-btn ${selectedDifficulties.includes(diff) ? 'active' : ''}`}>{diff}</button>
-                                ))}
+                            
+                            {/* Difficulties Filter */}
+                            <div className="filter-group">
+                                <div className="filter-group-title">
+                                    <i className="fas fa-chart-line"></i> Difficulty
+                                    <span className="filter-count">{allDifficulties.length}</span>
+                                </div>
+                                <div className="filter-buttons">
+                                    {allDifficulties.map(diff => (
+                                        <button 
+                                            key={diff} 
+                                            onClick={() => toggleFilter(diff, selectedDifficulties, setSelectedDifficulties)} 
+                                            className={`filter-btn ${selectedDifficulties.includes(diff) ? 'active' : ''}`}
+                                        >
+                                            {diff}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                        <div className="filter-group">
-                            <div className="filter-group-title"><i className="fas fa-atom"></i> Topic</div>
-                            <div className="filter-buttons">
-                                {allTopics.map(topic => (
-                                    <button key={topic} onClick={() => toggleFilter(topic, selectedTopics, setSelectedTopics)} className={`filter-btn ${selectedTopics.includes(topic) ? 'active' : ''}`}>{topic}</button>
-                                ))}
+                            
+                            {/* Topics Filter */}
+                            <div className="filter-group">
+                                <div className="filter-group-title">
+                                    <i className="fas fa-atom"></i> Topic
+                                    <span className="filter-count">{allTopics.length}</span>
+                                </div>
+                                <div className="filter-buttons">
+                                    {visibleTopics.map(topic => (
+                                        <button 
+                                            key={topic} 
+                                            onClick={() => toggleFilter(topic, selectedTopics, setSelectedTopics)} 
+                                            className={`filter-btn ${selectedTopics.includes(topic) ? 'active' : ''}`}
+                                        >
+                                            {topic}
+                                        </button>
+                                    ))}
+                                </div>
+                                {allTopics.length > 6 && (
+                                    <button 
+                                        className="see-more-btn" 
+                                        onClick={() => setShowAllTopics(!showAllTopics)}
+                                    >
+                                        {showAllTopics ? 'See less' : `See more (${allTopics.length - 6})`}
+                                        <i className={`fas fa-chevron-${showAllTopics ? 'up' : 'down'}`}></i>
+                                    </button>
+                                )}
                             </div>
+                            
+                            {/* Subtag Filter */}
+                            {allSubtags.length > 0 && (
+                                <div className="filter-group">
+                                    <div className="filter-group-title">
+                                        <i className="fas fa-tags"></i> Subtag
+                                        <span className="filter-count">{allSubtags.length}</span>
+                                    </div>
+                                    <div className="filter-buttons subtag-filter-buttons">
+                                        {visibleSubtags.map(subtag => (
+                                            <button 
+                                                key={subtag} 
+                                                onClick={() => toggleFilter(subtag, selectedSubtags, setSelectedSubtags)} 
+                                                className={`filter-btn ${selectedSubtags.includes(subtag) ? 'active' : ''}`}
+                                                style={{ fontSize: '0.75rem' }}
+                                            >
+                                                {subtag}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {allSubtags.length > 6 && (
+                                        <button 
+                                            className="see-more-btn" 
+                                            onClick={() => setShowAllSubtags(!showAllSubtags)}
+                                        >
+                                            {showAllSubtags ? 'See less' : `See more (${allSubtags.length - 6})`}
+                                            <i className={`fas fa-chevron-${showAllSubtags ? 'up' : 'down'}`}></i>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
+                        
                         <div className="stats-footer">
                             <span><i className="far fa-database"></i> {questionsDB.length} total</span>
                             <span><i className="far fa-filter"></i> {filteredQuestions.length} shown</span>
@@ -239,6 +668,9 @@ const App = () => {
                                     ))}
                                     {selectedTopics.map(topic => (
                                         <span key={topic} className="filter-tag">{topic}<button onClick={() => toggleFilter(topic, selectedTopics, setSelectedTopics)}><i className="fas fa-times-circle"></i></button></span>
+                                    ))}
+                                    {selectedSubtags.map(subtag => (
+                                        <span key={subtag} className="filter-tag subtag-filter-tag">{subtag}<button onClick={() => toggleFilter(subtag, selectedSubtags, setSelectedSubtags)}><i className="fas fa-times-circle"></i></button></span>
                                     ))}
                                     {searchQuery && (
                                         <span className="filter-tag">“{searchQuery}”<button onClick={() => { setSearchQuery(""); setLocalSearchQuery(""); }}><i className="fas fa-times-circle"></i></button></span>
@@ -269,6 +701,18 @@ const App = () => {
                                                 <h3 className="card-title">{question.title}</h3>
                                                 <div className="card-topic"><i className="fas fa-tag"></i><span>{question.topic}</span></div>
                                                 <p className="card-text">{question.text}</p>
+                                                
+                                                {/* Display subtags */}
+                                                {question.subtags && question.subtags.length > 0 && (
+                                                    <div className="card-subtags">
+                                                        {question.subtags.slice(0, 5).map((subtag, index) => (
+                                                            <span key={index} className="subtag-chip">{subtag}</span>
+                                                        ))}
+                                                        {question.subtags.length > 5 && (
+                                                            <span className="subtag-more">+{question.subtags.length - 5} more</span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="card-footer">
                                                 <button className="view-details-btn">View details <i className="fas fa-arrow-right"></i></button>
@@ -285,7 +729,7 @@ const App = () => {
                 </div>
             </>
         );
-    }, [searchQuery, selectedCompetitions, selectedDifficulties, selectedTopics, filteredQuestions, activeFiltersCount, allCompetitions, allDifficulties, allTopics, questionsDB.length, toggleFilter, clearFilters, getCompetitionClass, getDifficultyClass]);
+    }, [searchQuery, selectedCompetitions, selectedDifficulties, selectedTopics, selectedSubtags, filteredQuestions, activeFiltersCount, allCompetitions, allDifficulties, allTopics, allSubtags, questionsDB.length, loadingProblems, problemsError, showAllCompetitions, showAllTopics, showAllSubtags, toggleFilter, clearFilters, getCompetitionClass, getDifficultyClass]);
     
     const LoginPage = useCallback(() => {
         const [isLogin, setIsLogin] = useState(true);
@@ -525,7 +969,6 @@ const App = () => {
                 setUploadStatus('Extracting LaTeX from solution files with Mathpix...');
                 const solutionLatexResults = await processFilesWithMathpix(formData.solutionFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: 50 + Math.round(progress * 0.5) })); });
                 
-                // Combine LaTeX and Text from all files
                 let combinedProblemLatex = problemLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
                 let combinedSolutionLatex = solutionLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
                 let combinedProblemText = problemLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
@@ -536,9 +979,6 @@ const App = () => {
                 if (failedProblemFiles.length > 0) console.warn('Some problem files failed to convert:', failedProblemFiles);
                 if (failedSolutionFiles.length > 0) console.warn('Some solution files failed to convert:', failedSolutionFiles);
 
-                // ========================================================================
-                // MIGRATE MATHPIX CROPPED ASSETS TO PERMANENT FIREBASE STORAGE
-                // ========================================================================
                 setUploadStatus('Migrating Mathpix cropped assets to permanent Firebase Storage...');
                 console.log('[Asset Migration] Starting migration process...');
                 
@@ -588,6 +1028,13 @@ const App = () => {
                     setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
                     setLatexPreview({ problem: combinedProblemLatex, solution: combinedSolutionLatex });
                     setShowLatexPreview(true);
+                    
+                    // Refresh the problem list after successful submission
+                    const refreshResult = await fetchProblemsFromFirestore();
+                    if (refreshResult.success) {
+                        setQuestionsDB(refreshResult.problems);
+                    }
+                    
                     setTimeout(() => {
                         setFormData({ title: '', competition: '', difficulty: '', topic: '', year: '', problemSource: '', subtags: [], problemFiles: [], solutionFiles: [] });
                         setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
@@ -639,12 +1086,30 @@ const App = () => {
                     <div className="latex-preview-modal">
                         <div className="latex-preview-content">
                             <div className="latex-preview-header">
-                                <h3><i className="fas fa-code"></i> LaTeX Preview</h3>
+                                <h3><i className="fas fa-eye"></i> Mathpix Markdown Preview</h3>
                                 <button className="modal-close" onClick={() => setShowLatexPreview(false)}>×</button>
                             </div>
                             <div className="latex-preview-body">
-                                {latexPreview.problem && <div className="latex-section"><h4>Problem Statement LaTeX</h4><pre className="latex-code">{latexPreview.problem}</pre></div>}
-                                {latexPreview.solution && <div className="latex-section"><h4>Solution LaTeX</h4><pre className="latex-code">{latexPreview.solution}</pre></div>}
+                                {latexPreview.problem && (
+                                    <div className="latex-section">
+                                        <h4>Problem Statement Preview</h4>
+                                        <div className="preview-box">
+                                            <MathpixContent content={latexPreview.problem} />
+                                        </div>
+                                        <h4>Raw LaTeX</h4>
+                                        <pre className="latex-code">{latexPreview.problem}</pre>
+                                    </div>
+                                )}
+                                {latexPreview.solution && (
+                                    <div className="latex-section">
+                                        <h4>Solution Preview</h4>
+                                        <div className="preview-box">
+                                            <MathpixContent content={latexPreview.solution} />
+                                        </div>
+                                        <h4>Raw LaTeX</h4>
+                                        <pre className="latex-code">{latexPreview.solution}</pre>
+                                    </div>
+                                )}
                             </div>
                             <div className="latex-preview-footer">
                                 <button className="close-modal-btn" onClick={() => setShowLatexPreview(false)}>Close Preview</button>
@@ -840,7 +1305,16 @@ const App = () => {
                     <div className="modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h3><i className="fas fa-question-circle"></i> Problem Details</h3>
-                            <button className="modal-close" onClick={() => setSelectedQuestion(null)}>×</button>
+                            <div className="modal-header-actions">
+                                <button 
+                                    className="toggle-latex-btn"
+                                    onClick={() => setShowRawLatex(!showRawLatex)}
+                                    title={showRawLatex ? "Show rendered view" : "Show LaTeX source"}
+                                >
+                                    <i className={`fas ${showRawLatex ? 'fa-eye' : 'fa-code'}`}></i>
+                                </button>
+                                <button className="modal-close" onClick={() => setSelectedQuestion(null)}>×</button>
+                            </div>
                         </div>
                         <div className="modal-body">
                             <div className="modal-badges">
@@ -849,14 +1323,50 @@ const App = () => {
                                 <span className="competition-badge" style={{ background: '#f3e8ff', color: '#6b21a5' }}>{selectedQuestion.topic}</span>
                                 {selectedQuestion.year && <span className="competition-badge" style={{ background: '#f3f4f6', color: '#4b5563' }}>{selectedQuestion.year}</span>}
                             </div>
+                            
                             <div className="modal-section">
                                 <h4><i className="fas fa-question-circle" style={{ color: '#4f46e5' }}></i> Problem Statement</h4>
-                                <div className="problem-text">{selectedQuestion.text}</div>
+                                <div className="problem-text">
+                                    {showRawLatex ? (
+                                        <pre className="latex-raw">{selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}</pre>
+                                    ) : (
+                                        <MathpixContent 
+                                            content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'} 
+                                            className="problem-content"
+                                        />
+                                    )}
+                                </div>
+                                {selectedQuestion.problemSource && (
+                                    <div className="problem-source" style={{ marginTop: '8px', fontSize: '0.9rem', color: '#6b7280' }}>
+                                        <i className="fas fa-book" style={{ marginRight: '4px' }}></i> Source: {selectedQuestion.problemSource}
+                                    </div>
+                                )}
                             </div>
+                            
                             <div className="modal-section">
                                 <h4><i className="fas fa-lightbulb" style={{ color: '#f59e0b' }}></i> Solution / Answer</h4>
-                                <div className="solution-text">{selectedQuestion.solution || "This is a sample solution. In a complete implementation, each problem would have its own detailed solution."}</div>
+                                <div className="solution-text">
+                                    {showRawLatex ? (
+                                        <pre className="latex-raw">{selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}</pre>
+                                    ) : (
+                                        <MathpixContent 
+                                            content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'} 
+                                            className="solution-content"
+                                        />
+                                    )}
+                                </div>
                             </div>
+                            
+                            {selectedQuestion.subtags && selectedQuestion.subtags.length > 0 && (
+                                <div className="modal-section">
+                                    <h4><i className="fas fa-tags" style={{ color: '#8b5cf6' }}></i> Subtags</h4>
+                                    <div className="subtags-display">
+                                        {selectedQuestion.subtags.map((tag, index) => (
+                                            <span key={index} className="subtag-chip">{tag}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                         <div className="modal-footer">
                             <button className="close-modal-btn" onClick={() => setSelectedQuestion(null)}>Close</button>

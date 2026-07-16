@@ -71,8 +71,41 @@ body {
     position: sticky;
     top: 5rem;
     height: fit-content;
+    max-height: calc(100vh - 8rem);
     border: 1px solid #e5e7eb;
     margin-left: 100px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 4px;
+    margin-right: -4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 10px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* For Firefox */
+.sidebar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db transparent;
 }
 
 .sidebar-header {
@@ -82,6 +115,7 @@ body {
     margin-bottom: 1.5rem;
     padding-bottom: 0.75rem;
     border-bottom: 2px solid #f3f4f6;
+    flex-shrink: 0;
 }
 
 .sidebar-header h2 {
@@ -91,6 +125,39 @@ body {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* Stats Footer - Make it sticky at bottom */
+.stats-footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    flex-shrink: 0;
+    background: white;
+    position: sticky;
+    bottom: 0;
+    padding-bottom: 0.25rem;
+}
+
+/* Search Box - Keep at top */
+.search-box {
+    margin-bottom: 1.5rem;
+    flex-shrink: 0;
+}
+
+/* Filter Group - Make scrollable */
+.filter-group {
+    margin-bottom: 1.5rem;
+    flex-shrink: 0;
+}
+
+/* Filter Group - Last one can grow */
+.filter-group:last-of-type {
+    flex-shrink: 0;
 }
 
 .reset-btn {
@@ -1915,4 +1982,638 @@ textarea {
 .preview-latex-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* Subtag styles for cards */
+.card-subtags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #f3f4f6;
+}
+
+.subtag-chip {
+    display: inline-block;
+    padding: 3px 10px;
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+    color: #4f46e5;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    border: 1px solid #c7d2fe;
+    white-space: nowrap;
+}
+
+.subtag-more {
+    display: inline-block;
+    padding: 3px 10px;
+    background: #f3f4f6;
+    color: #6b7280;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border: 1px solid #e5e7eb;
+    white-space: nowrap;
+}
+
+/* Subtag display in modal */
+.subtags-display {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.subtags-display .subtag-chip {
+    padding: 4px 14px;
+    font-size: 0.8rem;
+    border-radius: 14px;
+}
+
+/* Additional card styling to accommodate subtags */
+.question-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 200px;
+}
+
+.card-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-text {
+    flex: 0 1 auto;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.card-subtags {
+    margin-top: auto;
+    padding-top: 12px;
+}
+
+/* Responsive adjustments for subtags */
+@media (max-width: 768px) {
+    .subtag-chip {
+        font-size: 0.65rem;
+        padding: 2px 8px;
+    }
+    
+    .card-subtags {
+        gap: 4px;
+    }
+}
+
+/* See More button styles */
+.see-more-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 4px 12px;
+    background: transparent;
+    border: 1px dashed #d1d5db;
+    border-radius: 16px;
+    color: #6b7280;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.see-more-btn:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+    color: #374151;
+}
+
+.see-more-btn i {
+    font-size: 0.65rem;
+    transition: transform 0.2s ease;
+}
+
+.see-more-btn:hover i {
+    transform: translateY(1px);
+}
+
+/* Filter group title with count */
+.filter-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 10px;
+}
+
+.filter-count {
+    margin-left: auto;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #9ca3af;
+    background: #f3f4f6;
+    padding: 1px 8px;
+    border-radius: 10px;
+}
+
+/* Filter buttons container with better spacing */
+.filter-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Subtag filter buttons - smaller text */
+.subtag-filter-buttons .filter-btn {
+    font-size: 0.7rem !important;
+    padding: 4px 10px;
+}
+
+/* Active filter tags for subtags */
+.subtag-filter-tag {
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff) !important;
+    color: #4f46e5 !important;
+    border-color: #c7d2fe !important;
+}
+
+/* Smooth animation for filter expansion */
+.filter-buttons {
+    transition: all 0.3s ease;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .see-more-btn {
+        font-size: 0.7rem;
+        padding: 3px 10px;
+    }
+    
+    .filter-group-title {
+        font-size: 0.8rem;
+    }
+    
+    .filter-count {
+        font-size: 0.65rem;
+        padding: 1px 6px;
+    }
+}
+
+/* Add a subtle animation when see more is clicked */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.filter-buttons .filter-btn {
+    animation: fadeIn 0.2s ease;
+}
+
+/* Mathpix Content Rendering Styles */
+.mathpix-content {
+    line-height: 1.8;
+    color: #1f2937;
+    font-size: 0.95rem;
+    word-wrap: break-word;
+}
+
+/* Mathpix content specific styles */
+.mathpix-content p {
+    margin-bottom: 0.75rem;
+}
+
+.mathpix-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 0.5rem 0;
+}
+
+.mathpix-content .math-inline,
+.mathpix-content .math-display {
+    display: inline-block;
+    padding: 0 0.25rem;
+}
+
+.mathpix-content .math-display {
+    display: block;
+    text-align: center;
+    margin: 1rem 0;
+    padding: 0.5rem 0;
+    overflow-x: auto;
+}
+
+/* MathJax specific styles */
+.mathpix-content .MathJax {
+    font-size: 1.1em;
+}
+
+.mathpix-content .MathJax_Display {
+    margin: 0.5rem 0;
+}
+
+/* Lists */
+.mathpix-content ul, 
+.mathpix-content ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+.mathpix-content li {
+    margin-bottom: 0.25rem;
+}
+
+/* Headings */
+.mathpix-content h1, 
+.mathpix-content h2, 
+.mathpix-content h3, 
+.mathpix-content h4, 
+.mathpix-content h5, 
+.mathpix-content h6 {
+    margin: 1rem 0 0.5rem 0;
+    color: #1f2937;
+}
+
+/* Tables */
+.mathpix-content table {
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+    width: 100%;
+}
+
+.mathpix-content table th,
+.mathpix-content table td {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+}
+
+.mathpix-content table th {
+    background: #f3f4f6;
+    font-weight: 600;
+}
+
+/* Blockquotes */
+.mathpix-content blockquote {
+    border-left: 4px solid #4f46e5;
+    padding: 0.5rem 1rem;
+    margin: 0.5rem 0;
+    background: #f9fafb;
+    color: #4b5563;
+}
+
+/* Code blocks */
+.mathpix-content pre {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+
+.mathpix-content code {
+    background: #f3f4f6;
+    color: #1f2937;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+}
+
+.mathpix-content pre code {
+    background: transparent;
+    padding: 0;
+    color: #e5e7eb;
+}
+
+/* Problem and solution specific styles */
+.problem-text .mathpix-content {
+    background: transparent;
+    padding: 0;
+}
+
+.solution-text .mathpix-content {
+    background: transparent;
+    padding: 0;
+}
+
+/* Modal header actions */
+.modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.toggle-latex-btn {
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    color: white;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.toggle-latex-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+/* Raw LaTeX view */
+.latex-raw {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Scrollable content in modal */
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* For long equations, make them scrollable horizontally */
+.mathpix-content .math-display {
+    overflow-x: auto;
+    padding: 0.25rem 0;
+}
+
+.mathpix-content .math-display::-webkit-scrollbar {
+    height: 4px;
+}
+
+.mathpix-content .math-display::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 4px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .mathpix-content {
+        font-size: 0.9rem;
+    }
+    
+    .mathpix-content .MathJax {
+        font-size: 1em;
+    }
+}
+
+/* Table styling */
+.mathpix-table-container {
+  margin: 1em 0;
+  overflow-x: auto;
+}
+
+.mathpix-table-container table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.mathpix-table-container th,
+.mathpix-table-container td {
+  border: 1px solid #ccc;
+  padding: 8px 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.mathpix-table-container th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+}
+
+/* Ensure math in tables is properly sized */
+.mathpix-table-container .katex {
+  font-size: 1em;
+}
+
+.mathpix-table-container .katex-display {
+  margin: 0.5em 0;
+}
+
+.mathpix-table-wrapper {
+  margin: 1em 0;
+  overflow-x: auto;
+}
+
+.mathpix-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.mathpix-table th,
+.mathpix-table td {
+  border: 1px solid #ccc;
+  padding: 8px 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.mathpix-table th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+}
+
+.mathpix-table .katex {
+  font-size: 1em;
+}
+
+.mathpix-table .katex-display {
+  margin: 0.5em 0;
+}
+
+/* Table styles for Mathpix content */
+.mathpix-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+  margin: 1em 0;
+}
+
+.mathpix-content table td,
+.mathpix-content table th {
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.mathpix-content table th {
+  background-color: #f8fafc;
+  font-weight: 600;
+}
+
+.mathpix-content table tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+/* KaTeX styles */
+.katex-display {
+  margin: 0.5em 0 !important;
+}
+
+.katex {
+  font-size: 1.05em;
+}
+
+/* Cell content styles for better multi-line display */
+.mathpix-content td > *,
+.mathpix-content th > * {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.mathpix-content td br,
+.mathpix-content th br {
+  display: block;
+  content: "";
+  margin-top: 0.25em;
+}
+
+/* Add these styles to your App.css for better table rendering */
+
+/* Improved table styling for Mathpix content */
+.mathpix-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+  margin: 1em 0;
+  border: 1px solid #d1d5db;
+}
+
+.mathpix-content table td,
+.mathpix-content table th {
+  border: 1px solid #d1d5db;
+  padding: 10px 14px;
+  text-align: center;
+  vertical-align: middle;
+  min-height: 40px;
+}
+
+/* Allow table cells to handle multi-line content */
+.mathpix-content table td,
+.mathpix-content table th {
+  white-space: normal;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.mathpix-content table th {
+  background-color: #f8fafc;
+  font-weight: 600;
+}
+
+.mathpix-content table tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.mathpix-content table tr:hover {
+  background-color: #f3f4f6;
+}
+
+/* Style for div-based tables (single column) */
+.mathpix-content .table-block {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  line-height: 1.8;
+}
+
+/* KaTeX styles inside tables */
+.mathpix-content table .katex {
+  font-size: 1em;
+}
+
+.mathpix-content table .katex-display {
+  margin: 0.3em 0;
+}
+
+/* Ensure math is properly displayed */
+.mathpix-content .katex-display {
+  margin: 0.5em 0 !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* For cells with very long content, allow horizontal scrolling */
+.mathpix-content table td .katex-display {
+  max-width: 100%;
+}
+
+/* Make sure line breaks work properly */
+.mathpix-content table td br,
+.mathpix-content table th br {
+  display: block;
+  content: "";
+  margin: 0.25em 0;
+}
+
+/* Responsive table container */
+.mathpix-content .table-wrapper {
+  overflow-x: auto;
+  margin: 1em 0;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+/* Mobile-friendly tables */
+@media (max-width: 768px) {
+  .mathpix-content table {
+    font-size: 0.85em;
+  }
+  
+  .mathpix-content table td,
+  .mathpix-content table th {
+    padding: 6px 8px;
+  }
+}
+
+/* Style for the div-based table block */
+.mathpix-content .table-block {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  line-height: 1.8;
 }

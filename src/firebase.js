@@ -20,7 +20,10 @@ import {
     getFirestore, 
     collection, 
     addDoc, 
-    serverTimestamp
+    serverTimestamp,
+    getDocs,  
+    query,    
+    orderBy   
 } from 'firebase/firestore';
 import axios from 'axios';
 
@@ -457,6 +460,42 @@ export const processFilesWithMathpix = async (files, onProgress) => {
         }
     }
     return results;
+};
+
+export const fetchProblemsFromFirestore = async () => {
+    try {
+        const problemsCollection = collection(db, 'Problems');
+        const problemsQuery = query(problemsCollection, orderBy('createdAt', 'desc'));
+        const querySnapshot = await getDocs(problemsQuery);
+        
+        const problems = [];
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            problems.push({
+                id: doc.id,
+                competition: data.competition || '',
+                difficulty: data.difficulty || '',
+                topic: data.topic || '',
+                title: data.title || '',
+                text: data.problemLatex || data.problemText || 'No problem statement available',
+                year: data.year || null,
+                solution: data.solutionLatex || data.solutionText || 'No solution available',
+                problemSource: data.problemSource || '',
+                subtags: data.subtags || [],
+                problemLatex: data.problemLatex || '',
+                solutionLatex: data.solutionLatex || '',
+                problemStatementUrls: data.problemStatementUrls || [],
+                solutionUrls: data.solutionUrls || [],
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            });
+        });
+        
+        return { success: true, problems };
+    } catch (error) {
+        console.error('Error fetching problems:', error);
+        return { success: false, error: error.message };
+    }
 };
 
 export { auth, onAuthStateChanged, db };
