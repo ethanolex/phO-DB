@@ -18,6 +18,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
 import remarkGfm from 'remark-gfm';
+import renderMathInElement from 'katex/contrib/auto-render';
 
 import { preprocessMathpix } from './mathpix/preprocessMathpix';
 
@@ -30,117 +31,35 @@ if (typeof window !== 'undefined') {
 }
 
 const MathpixContent = ({ content, className = '' }) => {
-  if (!content) return null;
-  
-  const normalizedContent = preprocessMathpix(content);
   const containerRef = useRef(null);
-  
+
+  const normalizedContent = useMemo(() => {
+    return preprocessMathpix(content || '');
+  }, [content]);
+
   useEffect(() => {
-    if (containerRef.current && window.katex) {
-      // Find all table cells
-      const tableCells = containerRef.current.querySelectorAll('td, th');
-      
-      tableCells.forEach((cell) => {
-        let html = cell.innerHTML;
-        
-        // Check if this cell contains math
-        const hasMath = html.includes('$') || 
-                       html.includes('\\(') || 
-                       html.includes('\\[') || 
-                       html.includes('\\varepsilon') ||
-                       html.includes('\\frac') ||
-                       html.includes('\\sqrt');
-        
-        if (!hasMath) return;
-        
-        // Process inline math with $...$
-        html = html.replace(/\$([^\$]+?)\$/g, (match, math) => {
-          try {
-            const trimmedMath = math.trim();
-            if (trimmedMath) {
-              // KaTeX will handle \varepsilon natively
-              return window.katex.renderToString(trimmedMath, { 
-                throwOnError: false,
-                displayMode: false,
-                trust: true
-              });
-            }
-            return match;
-          } catch (e) {
-            console.warn('KaTeX error:', e.message, 'Math:', math);
-            return match;
-          }
-        });
-        
-        // Process display math with $$...$$
-        html = html.replace(/\$\$([^\$]+?)\$\$/g, (match, math) => {
-          try {
-            const trimmedMath = math.trim();
-            if (trimmedMath) {
-              return window.katex.renderToString(trimmedMath, { 
-                throwOnError: false,
-                displayMode: true,
-                trust: true
-              });
-            }
-            return match;
-          } catch (e) {
-            console.warn('KaTeX display error:', e.message);
-            return match;
-          }
-        });
-        
-        // Process \(...\) as fallback
-        html = html.replace(/\\\((.*?)\\\)/g, (match, math) => {
-          try {
-            return window.katex.renderToString(math.trim(), { 
-              throwOnError: false,
-              displayMode: false,
-              trust: true
-            });
-          } catch (e) {
-            return match;
-          }
-        });
-        
-        // Process \[...\] as fallback
-        html = html.replace(/\\\[(.*?)\\\]/g, (match, math) => {
-          try {
-            return window.katex.renderToString(math.trim(), { 
-              throwOnError: false,
-              displayMode: true,
-              trust: true
-            });
-          } catch (e) {
-            return match;
-          }
-        });
-        
-        // If there's a standalone \varepsilon, wrap it in math
-        if (html.includes('\\varepsilon') && !html.includes('$')) {
-          html = html.replace(/\\varepsilon/g, (match) => {
-            try {
-              return window.katex.renderToString('\\varepsilon', { 
-                throwOnError: false,
-                displayMode: false,
-                trust: true
-              });
-            } catch (e) {
-              return match;
-            }
-          });
-        }
-        
-        // Update the cell if changed
-        if (html !== cell.innerHTML) {
-          cell.innerHTML = html;
-        }
+    if (!containerRef.current) return;
+
+    try {
+      renderMathInElement(containerRef.current, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false }
+        ],
+        throwOnError: false,
+        trust: true,
+        strict: "ignore"
       });
+    } catch (err) {
+      console.error("KaTeX auto-render failed:", err);
     }
   }, [normalizedContent]);
-  
+
   return (
-    <div ref={containerRef} className={`mathpix-content ${className}`}>
+    <div
+      ref={containerRef}
+      className={`mathpix-content ${className}`}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeKatex]}
@@ -150,46 +69,81 @@ const MathpixContent = ({ content, className = '' }) => {
               <table className="mathpix-table" {...props} />
             </div>
           ),
+
           th: ({ node, ...props }) => (
-            <th style={{ 
-              border: '1px solid #d1d5db', 
-              padding: '10px 14px',
-              backgroundColor: '#f8fafc',
-              fontWeight: 600,
-              textAlign: 'center',
-              verticalAlign: 'middle',
-              whiteSpace: 'normal',
-              wordWrap: 'break-word'
-            }} {...props} />
+            <th
+              style={{
+                border: "1px solid #d1d5db",
+                padding: "10px 14px",
+                backgroundColor: "#f8fafc",
+                fontWeight: 600,
+                textAlign: "center",
+                verticalAlign: "middle",
+                whiteSpace: "normal",
+                wordWrap: "break-word"
+              }}
+              {...props}
+            />
           ),
+
           td: ({ node, ...props }) => (
-            <td style={{ 
-              border: '1px solid #d1d5db', 
-              padding: '10px 14px',
-              textAlign: 'center',
-              verticalAlign: 'middle',
-              whiteSpace: 'normal',
-              wordWrap: 'break-word'
-            }} {...props} />
+            <td
+              style={{
+                border: "1px solid #d1d5db",
+                padding: "10px 14px",
+                textAlign: "center",
+                verticalAlign: "middle",
+                whiteSpace: "normal",
+                wordWrap: "break-word"
+              }}
+              {...props}
+            />
           ),
+
           div: ({ node, className, children, ...props }) => {
-            if (className === 'table-block') {
-              return <div className="table-block" {...props}>{children}</div>;
+            if (className === "table-block") {
+              return (
+                <div className="table-block" {...props}>
+                  {children}
+                </div>
+              );
             }
+
             return <div {...props}>{children}</div>;
           },
-          figure: ({ node, children, ...props }) => (
-            <figure style={{ textAlign: 'center', margin: '2em 0' }} {...props}>
-              {children}
-            </figure>
+
+          figure: ({ node, ...props }) => (
+            <figure
+              style={{
+                textAlign: "center",
+                margin: "2em 0"
+              }}
+              {...props}
+            />
           ),
-          figcaption: ({ node, children, ...props }) => (
-            <figcaption style={{ fontSize: '0.95em', color: '#444', marginTop: '0.75em' }} {...props}>
-              {children}
-            </figcaption>
+
+          figcaption: ({ node, ...props }) => (
+            <figcaption
+              style={{
+                fontSize: "0.95em",
+                color: "#444",
+                marginTop: "0.75em"
+              }}
+              {...props}
+            />
           ),
-          p: ({ node, ...props }) => <p style={{ margin: '0.5em 0', lineHeight: '1.6' }} {...props} />,
-          br: ({ node, ...props }) => <br {...props} />,
+
+          p: ({ node, ...props }) => (
+            <p
+              style={{
+                margin: "0.5em 0",
+                lineHeight: "1.6"
+              }}
+              {...props}
+            />
+          ),
+
+          br: ({ node, ...props }) => <br {...props} />
         }}
       >
         {normalizedContent}
@@ -1024,7 +978,7 @@ const App = () => {
                                         <div className="preview-box">
                                             <MathpixContent content={latexPreview.problem} />
                                         </div>
-                                        <h4>Raw LaTeX</h4>
+                                        <h4>Raw LaTeX/Markdown (.mmd)</h4>
                                         <pre className="latex-code">{latexPreview.problem}</pre>
                                     </div>
                                 )}
@@ -1034,7 +988,7 @@ const App = () => {
                                         <div className="preview-box">
                                             <MathpixContent content={latexPreview.solution} />
                                         </div>
-                                        <h4>Raw LaTeX</h4>
+                                        <h4>Raw LaTeX/Markdown (.mmd)</h4>
                                         <pre className="latex-code">{latexPreview.solution}</pre>
                                     </div>
                                 )}

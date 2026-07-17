@@ -142,10 +142,23 @@ const processFigures = (text) => {
     let imgUrl = imgMatch[1].trim();
     
     let caption = '';
-    const captionMatch = content.match(/\\caption\{([\s\S]*?)\}(?!.*\\caption)/);
-    if (captionMatch) {
-      caption = captionMatch[1];
-      // Math in captions is already converted
+
+    const captionStart = content.indexOf('\\caption{');
+
+    if (captionStart !== -1) {
+        let i = captionStart + '\\caption{'.length;
+        let depth = 1;
+
+        while (i < content.length && depth > 0) {
+            if (content[i] === '{') depth++;
+            else if (content[i] === '}') depth--;
+            i++;
+        }
+
+        caption = content.slice(
+            captionStart + '\\caption{'.length,
+            i - 1
+        );
     }
     
     return '<figure style="text-align: center; margin: 2em 0;">\n' +
