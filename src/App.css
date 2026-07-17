@@ -2617,3 +2617,143 @@ textarea {
   border: 1px solid #e5e7eb;
   line-height: 1.8;
 }
+
+/* Styles for the new table parser */
+/* Add to App.css - Table rendering styles */
+
+/* Add to App.css */
+
+/* Table wrapper */
+.table-wrapper {
+  overflow-x: auto;
+  margin: 1em 0;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  background: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* Mathpix table styles */
+.mathpix-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+  min-width: 300px;
+  border: 1px solid #d1d5db;
+}
+
+.mathpix-table th,
+.mathpix-table td {
+  border: 1px solid #d1d5db;
+  padding: 10px 14px;
+  text-align: center;
+  vertical-align: middle;
+  white-space: normal;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+
+.mathpix-table th {
+  background-color: #f8fafc;
+  font-weight: 600;
+}
+
+.mathpix-table tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.mathpix-table tr:hover {
+  background-color: #f3f4f6;
+}
+
+/* Table block for single-column tables */
+.table-block {
+  margin: 1em 0;
+  padding: 0.75rem 1rem;
+  background: #f8fafc;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  line-height: 1.8;
+}
+
+/* Ensure math renders properly inside table cells */
+.mathpix-table .katex {
+  font-size: 1em;
+  line-height: 1.2;
+}
+
+.mathpix-table .katex-display {
+  margin: 0.3em 0;
+  overflow-x: auto;
+}
+
+.mathpix-table td .katex-display,
+.mathpix-table th .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 2px 0;
+}
+
+/* Figures */
+.mathpix-content figure {
+  margin: 2em 0;
+  text-align: center;
+}
+
+.mathpix-content figure img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+  margin: 0 auto;
+}
+
+.mathpix-content figure figcaption {
+  font-size: 0.95em;
+  color: #444;
+  margin-top: 0.75em;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .mathpix-table {
+    font-size: 0.85em;
+  }
+  
+  .mathpix-table th,
+  .mathpix-table td {
+    padding: 6px 8px;
+  }
+  
+  .table-wrapper {
+    margin: 0.5em 0;
+    border-radius: 0.375rem;
+  }
+}
+
+/* App.css - Add these styles */
+
+/* Ensure text in math cells doesn't get misinterpreted */
+.mathpix-content td,
+.mathpix-content th {
+  font-size: 0.95em;
+  line-height: 1.6;
+}
+
+/* Allow rehypeKatex to handle math outside tables */
+.mathpix-content .katex-display {
+  margin: 0.5em 0;
+}
+
+.mathpix-content .katex {
+  font-size: 1.05em;
+}
+
+/* Prevent double-rendering issues */
+.mathpix-content .math-cell .katex {
+  font-size: 1em;
+}
+
+.mathpix-content .math-cell .katex-display {
+  margin: 0.3em 0;
+}

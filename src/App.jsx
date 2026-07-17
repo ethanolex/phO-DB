@@ -19,248 +19,176 @@ import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
 import remarkGfm from 'remark-gfm';
 
-// Process figures
-const processFigures = (text) => {
-  if (!text) return '';
-  
-  const figureRegex = /\\begin\{figure\}([\s\S]*?)\\end\{figure\}/g;
-  
-  return text.replace(figureRegex, (match, content) => {
-    const imgMatch = content.match(/\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/);
-    if (!imgMatch) return '';
-    
-    let imgUrl = imgMatch[1].trim();
-    
-    let caption = '';
-    const captionMatch = content.match(/\\caption\{([\s\S]*)\}/);
-    if (captionMatch) {
-      caption = captionMatch[1];
-      let depth = 1;
-      let i = 0;
-      while (i < content.length && depth > 0) {
-        if (content[i] === '{') depth++;
-        else if (content[i] === '}') depth--;
-        i++;
-      }
-      const captionStart = content.indexOf('\\caption{') + 9;
-      caption = content.slice(captionStart, captionStart + i - captionStart - 1);
-    }
-    
-    const encodedUrl = imgUrl.replace(/&/g, '&amp;');
-    
-    const processedCaption = caption
-      .replace(/\\\[(.*?)\\\]/gs, '$$$$${1}$$$$')
-      .replace(/\\\((.*?)\\\)/gs, '$${1}$$');
-    
-    return `\n<figure style="text-align: center; margin: 2em 0;">
-  <img src="${encodedUrl}" alt="Figure" style="max-width: 100%; height: auto; border-radius: 4px;" />
-  ${processedCaption ? `<figcaption style="font-size: 0.95em; color: #444; margin-top: 0.75em;">${processedCaption}</figcaption>` : ''}
-</figure>\n`;
-  });
-};
+import { preprocessMathpix } from './mathpix/preprocessMathpix';
 
-// Convert LaTeX tabular to Markdown table
-const convertTabularToMarkdown = (text) => {
-  if (!text) return text;
+// In index.js or App.jsx, add this before rendering
+import katex from 'katex';
 
-  let result = text;
-  
-  // Find all tabular environments
-  const tabularRegex = /\\begin\{tabular\}\{([^}]*)\}([\s\S]*?)\\end\{tabular\}/g;
-  
-  result = result.replace(tabularRegex, (match, colSpec, content) => {
-    // Clean the content
-    let cleanContent = content;
-    
-    // Remove \hline
-    cleanContent = cleanContent.replace(/\\hline/g, '');
-    
-    // Handle nested tabulars - convert to multiline text
-    cleanContent = cleanContent.replace(/\\begin\{tabular\}\{[^}]*\}([\s\S]*?)\\end\{tabular\}/g, (nestedMatch, nestedContent) => {
-      let nestedClean = nestedContent.replace(/\\hline/g, '');
-      // Replace \\ with <br> for line breaks
-      nestedClean = nestedClean.replace(/\\\\/g, '<br>');
-      nestedClean = nestedClean.trim();
-      return nestedClean;
-    });
-    
-    // Handle array environments within cells
-    cleanContent = cleanContent.replace(/\\begin\{array\}\{[^}]*\}([\s\S]*?)\\end\{array\}/g, (arrayMatch, arrayContent) => {
-      // Replace \\ with <br> for line breaks
-      let arrayClean = arrayContent.replace(/\\\\/g, '<br>');
-      arrayClean = arrayClean.trim();
-      return arrayClean;
-    });
-    
-    // Split into rows
-    const rows = cleanContent.split(/\\\\/).map(row => row.trim()).filter(row => row);
-    
-    if (rows.length === 0) return '';
-    
-    // Check if this is a single-column table or multi-column
-    const isSingleColumn = !rows[0].includes('&');
-    
-    if (isSingleColumn) {
-      // For single column tables, just render as a block with line breaks
-      const processedRows = rows.map(row => {
-        // Convert math expressions
-        let processed = row
-          .replace(/\\\((.*?)\\\)/g, '$$$1$')
-          .replace(/\\\[(.*?)\\\]/g, '$$$$1$$$')
-          .replace(/\\text\{([^}]*)\}/g, '$1');
-        return processed;
-      });
-      // Return as a div with line breaks
-      return `<div style="margin: 1em 0; padding: 0.5em; background: #f8fafc; border-radius: 0.5rem; border: 1px solid #e5e7eb;">${processedRows.join('<br>')}</div>`;
-    }
-    
-    // For multi-column tables, build Markdown table
-    const markdownRows = rows.map(row => {
-      // Split cells by &, but be careful with nested braces
-      const cells = [];
-      let currentCell = '';
-      let braceDepth = 0;
-      let inMath = false;
-      
-      for (let i = 0; i < row.length; i++) {
-        const char = row[i];
-        
-        if (char === '{') braceDepth++;
-        else if (char === '}') braceDepth--;
-        
-        // Track math mode
-        if (char === '$' && braceDepth === 0) {
-          inMath = !inMath;
-        }
-        if (char === '\\' && row[i+1] === '(' && braceDepth === 0) {
-          inMath = true;
-        }
-        if (char === '\\' && row[i+1] === ')' && braceDepth === 0) {
-          inMath = false;
-        }
-        
-        if (char === '&' && braceDepth === 0 && !inMath) {
-          cells.push(currentCell.trim());
-          currentCell = '';
-        } else {
-          currentCell += char;
-        }
-      }
-      if (currentCell.trim()) {
-        cells.push(currentCell.trim());
-      }
-      
-      // Process each cell - convert math expressions
-      const processedCells = cells.map(cell => {
-        let processed = cell
-          .replace(/\\\((.*?)\\\)/g, '$$$1$')
-          .replace(/\\\[(.*?)\\\]/g, '$$$$1$$$')
-          .replace(/\\text\{([^}]*)\}/g, '$1')
-          .replace(/\\varepsilon/g, 'ε');
-        return processed;
-      });
-      
-      return '| ' + processedCells.join(' | ') + ' |';
-    });
-    
-    // Determine number of columns from first row
-    const numCols = rows[0].split('&').length;
-    
-    // Create separator row
-    const separatorRow = '| ' + Array(numCols).fill('---').join(' | ') + ' |';
-    
-    // Insert separator after first row
-    markdownRows.splice(1, 0, separatorRow);
-    
-    return markdownRows.join('\n');
-  });
-  
-  return result;
-};
+// Configure KaTeX globally
+if (typeof window !== 'undefined') {
+  window.katex = katex;
+}
 
-// Preprocess Mathpix content
-const preprocessMathpix = (text) => {
-  if (!text) return '';
-  let processed = text;
-
-  // 1. Process Figures
-  processed = processFigures(processed);
-
-  // 2. Convert tabulars to markdown tables BEFORE ReactMarkdown
-  processed = convertTabularToMarkdown(processed);
-
-  // 3. Convert remaining block math
-  processed = processed.replace(/\\\[(.*?)\\\]/gs, (match, p1) => `\n$$\n${p1}\n$$\n`);
-
-  // 4. Convert remaining inline math
-  processed = processed.replace(/\\\((.*?)\\\)/gs, (match, p1) => ` $${p1}$ `);
-
-  // 5. Convert sections
-  processed = processed.replace(/\\section\*\{([^}]+)\}/g, (match, p1) => `\n### ${p1}\n`);
-
-  // 6. Fix common Mathpix issues
-  processed = processed.replace(/\\text\{([^}]*)\}/g, (match, text) => {
-    // Keep text as is, but ensure it's properly rendered
-    return text;
-  });
-
-  return processed;
-};
-
-// MathpixContent component - let ReactMarkdown handle everything
 const MathpixContent = ({ content, className = '' }) => {
   if (!content) return null;
   
   const normalizedContent = preprocessMathpix(content);
+  const containerRef = useRef(null);
+  
+  useEffect(() => {
+    if (containerRef.current && window.katex) {
+      // Find all table cells
+      const tableCells = containerRef.current.querySelectorAll('td, th');
+      
+      tableCells.forEach((cell) => {
+        let html = cell.innerHTML;
+        
+        // Check if this cell contains math
+        const hasMath = html.includes('$') || 
+                       html.includes('\\(') || 
+                       html.includes('\\[') || 
+                       html.includes('\\varepsilon') ||
+                       html.includes('\\frac') ||
+                       html.includes('\\sqrt');
+        
+        if (!hasMath) return;
+        
+        // Process inline math with $...$
+        html = html.replace(/\$([^\$]+?)\$/g, (match, math) => {
+          try {
+            const trimmedMath = math.trim();
+            if (trimmedMath) {
+              // KaTeX will handle \varepsilon natively
+              return window.katex.renderToString(trimmedMath, { 
+                throwOnError: false,
+                displayMode: false,
+                trust: true
+              });
+            }
+            return match;
+          } catch (e) {
+            console.warn('KaTeX error:', e.message, 'Math:', math);
+            return match;
+          }
+        });
+        
+        // Process display math with $$...$$
+        html = html.replace(/\$\$([^\$]+?)\$\$/g, (match, math) => {
+          try {
+            const trimmedMath = math.trim();
+            if (trimmedMath) {
+              return window.katex.renderToString(trimmedMath, { 
+                throwOnError: false,
+                displayMode: true,
+                trust: true
+              });
+            }
+            return match;
+          } catch (e) {
+            console.warn('KaTeX display error:', e.message);
+            return match;
+          }
+        });
+        
+        // Process \(...\) as fallback
+        html = html.replace(/\\\((.*?)\\\)/g, (match, math) => {
+          try {
+            return window.katex.renderToString(math.trim(), { 
+              throwOnError: false,
+              displayMode: false,
+              trust: true
+            });
+          } catch (e) {
+            return match;
+          }
+        });
+        
+        // Process \[...\] as fallback
+        html = html.replace(/\\\[(.*?)\\\]/g, (match, math) => {
+          try {
+            return window.katex.renderToString(math.trim(), { 
+              throwOnError: false,
+              displayMode: true,
+              trust: true
+            });
+          } catch (e) {
+            return match;
+          }
+        });
+        
+        // If there's a standalone \varepsilon, wrap it in math
+        if (html.includes('\\varepsilon') && !html.includes('$')) {
+          html = html.replace(/\\varepsilon/g, (match) => {
+            try {
+              return window.katex.renderToString('\\varepsilon', { 
+                throwOnError: false,
+                displayMode: false,
+                trust: true
+              });
+            } catch (e) {
+              return match;
+            }
+          });
+        }
+        
+        // Update the cell if changed
+        if (html !== cell.innerHTML) {
+          cell.innerHTML = html;
+        }
+      });
+    }
+  }, [normalizedContent]);
   
   return (
-    <div className={`mathpix-content ${className}`}>
+    <div ref={containerRef} className={`mathpix-content ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeKatex]}
         components={{
-          // Custom table rendering for better styling
           table: ({ node, ...props }) => (
-            <div style={{ overflowX: 'auto', margin: '1em 0' }}>
-              <table 
-                style={{ 
-                  borderCollapse: 'collapse', 
-                  width: '100%', 
-                  fontSize: '0.95em',
-                  border: '1px solid #d1d5db'
-                }} 
-                {...props} 
-              />
+            <div className="table-wrapper">
+              <table className="mathpix-table" {...props} />
             </div>
           ),
           th: ({ node, ...props }) => (
-            <th 
-              style={{ 
-                border: '1px solid #d1d5db', 
-                padding: '8px 12px',
-                backgroundColor: '#f8fafc',
-                fontWeight: 600,
-                textAlign: 'center'
-              }} 
-              {...props} 
-            />
+            <th style={{ 
+              border: '1px solid #d1d5db', 
+              padding: '10px 14px',
+              backgroundColor: '#f8fafc',
+              fontWeight: 600,
+              textAlign: 'center',
+              verticalAlign: 'middle',
+              whiteSpace: 'normal',
+              wordWrap: 'break-word'
+            }} {...props} />
           ),
           td: ({ node, ...props }) => (
-            <td 
-              style={{ 
-                border: '1px solid #d1d5db', 
-                padding: '8px 12px',
-                textAlign: 'center',
-                verticalAlign: 'middle'
-              }} 
-              {...props} 
-            />
+            <td style={{ 
+              border: '1px solid #d1d5db', 
+              padding: '10px 14px',
+              textAlign: 'center',
+              verticalAlign: 'middle',
+              whiteSpace: 'normal',
+              wordWrap: 'break-word'
+            }} {...props} />
           ),
-          tr: ({ node, ...props }) => (
-            <tr {...props} />
+          div: ({ node, className, children, ...props }) => {
+            if (className === 'table-block') {
+              return <div className="table-block" {...props}>{children}</div>;
+            }
+            return <div {...props}>{children}</div>;
+          },
+          figure: ({ node, children, ...props }) => (
+            <figure style={{ textAlign: 'center', margin: '2em 0' }} {...props}>
+              {children}
+            </figure>
+          ),
+          figcaption: ({ node, children, ...props }) => (
+            <figcaption style={{ fontSize: '0.95em', color: '#444', marginTop: '0.75em' }} {...props}>
+              {children}
+            </figcaption>
           ),
           p: ({ node, ...props }) => <p style={{ margin: '0.5em 0', lineHeight: '1.6' }} {...props} />,
-          // Handle inline HTML that might contain <br> tags
           br: ({ node, ...props }) => <br {...props} />,
         }}
       >
