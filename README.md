@@ -1,18 +1,52 @@
-# React + Vite
+## OCR and text conversion process
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+1. File is chosen and uploaded on web 
+2. File is uploaded to /temp on firebase storage 
+3. URL pointing to file location is fetched and sent to API
+4. API processes the image and converts content into LaTeX/Markdown
+  - Detected illustrations are converted into cropped assets and temporarily hosted in Mathpix CDN server 
+  - Cropped assets are routed to /illustrations on firebase storage
+  - Temporary CDN URLs of the cropped assets in the LaTeX are replaced with the corresponding permanent firebase storage URL
+5. LaTeX/Markdown is displayed to user for checking; text is naturally rendered
+6. If form is submitted, the problem and solution files are reuploaded to problems/ in the firebase storage, organised and grouped together, together with any illustrations extracted
+7. Database entry in created in firestore, with the relevant details and URLs
 
-Currently, two official plugins are available:
+## Database structure
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Each problem entry in the database consists of the following fields
 
-## React Compiler
-
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+problemSource: (string)
+source: (string)
+competition: (string)
+selectionTest: ()
+textbook: ()
+sourceType: (string)
+createdAt: (timestamp)
+difficulty: (int)
+fileCount (map)
+problem: (int)
+solution: (int)
+ocrConfidence (map)
+problem: (int)
+solution: (int)
+problemLatex: (string)
+problemStatementUrls (array)
+- (string)
+- (string)
+problemText: (string)
+solutionLatex: (string)
+solutionText: (string)
+solutionUrls (array)
+- (string)
+- (string)
+status: (string)
+subtags: (array)
+- (string)
+- (string)
+title: (string)
+topic: (string)
+updatedAt: (timestamp)
+userDisplayName: (string)
+userEmail: (string)
+userId: (string)
+year: (int)
