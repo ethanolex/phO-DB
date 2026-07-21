@@ -2757,3 +2757,308 @@ textarea {
 .mathpix-content .math-cell .katex-display {
   margin: 0.3em 0;
 }
+
+/* Source Type Selector - Updated for 3 options */
+.source-type-selector {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin: 0.5rem 0;
+}
+
+.source-type-btn {
+    padding: 0.75rem 1rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: white;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #4b5563;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: 'Inter', sans-serif;
+}
+
+.source-type-btn i {
+    font-size: 1.1rem;
+}
+
+.source-type-btn:hover:not(:disabled) {
+    border-color: #9ca3af;
+    background: #f9fafb;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.source-type-btn.active {
+    border-color: #4f46e5;
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+    color: #3730a3;
+    box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.15);
+    transform: translateY(-2px);
+}
+
+.source-type-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Custom Source Input (reusable for both textbook and selection test) */
+.custom-source-container {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.custom-source-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.custom-source-input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s;
+}
+
+.custom-source-input:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.custom-source-input:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+.add-source-btn {
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+    font-family: 'Inter', sans-serif;
+}
+
+.add-source-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.add-source-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.add-source-btn i {
+    font-size: 0.875rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .source-type-selector {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    
+    .source-type-btn {
+        padding: 0.625rem 1rem;
+        font-size: 0.875rem;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 640px) {
+    .custom-source-input-wrapper {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .add-source-btn {
+        justify-content: center;
+        padding: 0.625rem 1rem;
+    }
+}
+
+/* Improve select styling for selection test dropdown */
+select[name="selectionTest"] {
+    width: 100%;
+    padding: 0.625rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s;
+    background-color: white;
+}
+
+select[name="selectionTest"]:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+select[name="selectionTest"]:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+/* Competition and Textbook fields transition */
+.form-group.full-width {
+    transition: all 0.3s ease;
+}
+
+/* Styling for competition/textbook fields when they appear */
+.form-group.full-width select,
+.form-group.full-width input {
+    margin-top: 0.25rem;
+}
+
+/* Optional: Add a subtle animation for the source type switcher */
+.source-type-btn.active {
+    animation: sourceSelect 0.2s ease;
+}
+
+@keyframes sourceSelect {
+    from {
+        transform: scale(0.98);
+    }
+    to {
+        transform: scale(1);
+    }
+}
+
+/* Custom Textbook Input Styles */
+.custom-textbook-container {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.custom-textbook-input-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.custom-textbook-input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s;
+}
+
+.custom-textbook-input:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.custom-textbook-input:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+.add-textbook-btn {
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+    font-family: 'Inter', sans-serif;
+}
+
+.add-textbook-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.add-textbook-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.add-textbook-btn i {
+    font-size: 0.875rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .custom-textbook-input-wrapper {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .add-textbook-btn {
+        justify-content: center;
+        padding: 0.625rem 1rem;
+    }
+}
+
+/* Improve select styling for textbook dropdown */
+select[name="textbook"] {
+    width: 100%;
+    padding: 0.625rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.5rem;
+    font-size: 0.875rem;
+    font-family: 'Inter', sans-serif;
+    transition: all 0.2s;
+    background-color: white;
+}
+
+select[name="textbook"]:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+select[name="textbook"]:disabled {
+    background: #f3f4f6;
+    cursor: not-allowed;
+}
+
+/* Error message for textbook addition */
+.textbook-error {
+    color: #dc2626;
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+.textbook-success {
+    color: #16a34a;
+    font-size: 0.75rem;
+    margin-top: 0.25rem;
+}
