@@ -16,37 +16,62 @@
 Each problem entry in the database consists of the following fields
 
 problemSource: (string)
+
 source: (string)
+
 competition: (string)
+
 selectionTest: ()
+
 textbook: ()
+
 sourceType: (string)
+
 createdAt: (timestamp)
+
 difficulty: (int)
+
 fileCount (map)
+
 problem: (int)
+
 solution: (int)
+
 ocrConfidence (map)
-problem: (int)
-solution: (int)
+- problem: (int)
+- solution: (int)
+
 problemLatex: (string)
+
 problemStatementUrls (array)
 - (string)
 - (string)
 problemText: (string)
+
 solutionLatex: (string)
+
 solutionText: (string)
+
 solutionUrls (array)
 - (string)
 - (string)
+- 
 status: (string)
+
 subtags: (array)
 - (string)
 - (string)
+- 
 title: (string)
+
 topic: (string)
+
 updatedAt: (timestamp)
+
 userDisplayName: (string)
+
 userEmail: (string)
+
 userId: (string)
+
 year: (int)
