@@ -19,6 +19,8 @@ import remarkGfm from 'remark-gfm';
 
 import { preprocessMathpix } from './mathpix/preprocessMathpix';
 
+const SEARCH_DEBOUNCE_MS = 650;
+
 const MathpixContent = ({ content, className = '' }) => {
   const normalizedContent = useMemo(() => {
     return preprocessMathpix(content || '');
@@ -334,8 +336,14 @@ const App = () => {
     
     const DatabasePage = useCallback(() => {
         const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
+        const isSearchPending = localSearchQuery !== searchQuery;
+
         useEffect(() => {
-            const timer = setTimeout(() => { setSearchQuery(localSearchQuery); }, 300);
+            setLocalSearchQuery(searchQuery);
+        }, [searchQuery]);
+
+        useEffect(() => {
+            const timer = setTimeout(() => { setSearchQuery(localSearchQuery); }, SEARCH_DEBOUNCE_MS);
             return () => clearTimeout(timer);
         }, [localSearchQuery, setSearchQuery]);
         
@@ -382,8 +390,9 @@ const App = () => {
                                 <label><i className="fas fa-search"></i> Search</label>
                                 <div className="search-input-wrapper">
                                     <i className="fas fa-search search-icon"></i>
-                                    <input type="text" placeholder="Title or problem text..." value={localSearchQuery} onChange={(e) => setLocalSearchQuery(e.target.value)} className="search-input" autoComplete="off" />
+                                    <input type="text" placeholder="Title or problem text..." value={localSearchQuery} onChange={(e) => setLocalSearchQuery(e.target.value)} className="search-input" autoComplete="off" aria-busy={isSearchPending} />
                                 </div>
+                                <span className="search-status">{isSearchPending ? 'Searching…' : '\u00A0'}</span>
                             </div>
                             
                             {/* Competitions Filter */}
