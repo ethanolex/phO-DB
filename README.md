@@ -55,13 +55,13 @@ solutionText: (string)
 solutionUrls (array)
 - (string)
 - (string)
-- 
+
 status: (string)
 
 subtags: (array)
 - (string)
 - (string)
-- 
+
 title: (string)
 
 topic: (string)
