@@ -282,6 +282,7 @@ export const extractAndUploadMathpixAssets = async (contents, problemId, fileTyp
     const isArray = Array.isArray(contents);
     const stringsToProcess = isArray ? contents : [contents];
     
+    // Regex for Mathpix image URLs
     const mathpixUrlRegex = /https?:\/\/[a-zA-Z0-9.-]*mathpix\.com\/[^\s\)"'\}>]+?\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s\)"'\}>]*)?/gi;
     const allMatches = new Set();
     
@@ -349,6 +350,16 @@ export const extractAndUploadMathpixAssets = async (contents, problemId, fileTyp
     return isArray ? updatedStrings : updatedStrings[0];
 };
 
+// Helper function to process HTML content from Mathpix API
+export const processMathpixHtml = async (htmlContent, problemId, fileType) => {
+    if (!htmlContent) return null;
+    
+    // Extract and migrate any Mathpix-hosted images in the HTML
+    const migratedHtml = await extractAndUploadMathpixAssets([htmlContent], problemId, fileType);
+    
+    return Array.isArray(migratedHtml) ? migratedHtml[0] : migratedHtml;
+};
+
 export const convertToLatex = async (file, onProgress) => {
     try {
         if (!file) return { success: false, error: 'No file provided' };
@@ -397,7 +408,7 @@ export const convertToLatex = async (file, onProgress) => {
             'https://api.mathpix.com/v3/text',
             {
                 url: fileUrl,
-                formats: ['latex', 'text'],
+                formats: ['latex', 'text', 'html'],  // Add HTML format
                 math_inline_delimiters: ['$', '$'],
                 math_display_delimiters: ['$$', '$$'],
                 enable_table_detection: true,
@@ -409,12 +420,26 @@ export const convertToLatex = async (file, onProgress) => {
         if (response.status === 200 && response.data) {
             let latexText = '';
             let plainText = '';
+            let htmlContent = '';
             let confidence = 0;
 
             if (response.data.latex) latexText = Array.isArray(response.data.latex) ? response.data.latex.join('\n\n') : response.data.latex;
             if (response.data.text) plainText = Array.isArray(response.data.text) ? response.data.text.join('\n\n') : response.data.text;
+            if (response.data.html) htmlContent = Array.isArray(response.data.html) ? response.data.html.join('\n\n') : response.data.html;
             if (response.data.confidence) confidence = response.data.confidence;
 
+            // Prefer HTML if available, fallback to latex/text
+            if (htmlContent) {
+                return { 
+                    success: true, 
+                    latex: latexText || plainText || '', 
+                    text: plainText || latexText || '', 
+                    html: htmlContent,  // Return HTML for direct rendering
+                    confidence: confidence || 0, 
+                    rawResponse: response.data 
+                };
+            }
+            
             if (latexText || plainText) {
                 return { success: true, latex: latexText || plainText || 'No content extracted', text: plainText || latexText || 'No content extracted', confidence: confidence || 0, rawResponse: response.data };
             }
@@ -484,6 +509,8 @@ export const fetchProblemsFromFirestore = async () => {
                 subtags: data.subtags || [],
                 problemLatex: data.problemLatex || '',
                 solutionLatex: data.solutionLatex || '',
+                problemHtml: data.problemHtml || null,  // HTML for direct rendering
+                solutionHtml: data.solutionHtml || null,  // HTML for direct rendering
                 problemStatementUrls: data.problemStatementUrls || [],
                 solutionUrls: data.solutionUrls || [],
                 createdAt: data.createdAt,

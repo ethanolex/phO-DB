@@ -21,7 +21,19 @@ import { preprocessMathpix } from './mathpix/preprocessMathpix';
 
 const SEARCH_DEBOUNCE_MS = 650;
 
-const MathpixContent = ({ content, className = '' }) => {
+// Component for rendering Mathpix content - supports both HTML and LaTeX/Markdown
+const MathpixContent = ({ content, htmlContent, className = '' }) => {
+  // If HTML content is available (from Mathpix API), render it directly
+  if (htmlContent) {
+    return (
+      <div 
+        className={`mathpix-content ${className}`}
+        dangerouslySetInnerHTML={{ __html: htmlContent }}
+      />
+    );
+  }
+  
+  // Fallback to preprocessing LaTeX/Markdown
   const normalizedContent = useMemo(() => {
     return preprocessMathpix(content || '');
   }, [content]);
@@ -912,6 +924,10 @@ const App = () => {
             setUploadStatus('Extracting LaTeX from solution files with Mathpix...');
             const solutionLatexResults = await processFilesWithMathpix(formData.solutionFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: 50 + Math.round(progress * 0.5) })); });
             
+            // Extract HTML content if available (for direct rendering without parsing)
+            let combinedProblemHtml = problemLatexResults.filter(r => r.success).map(r => r.html || '').join('\n\n');
+            let combinedSolutionHtml = solutionLatexResults.filter(r => r.success).map(r => r.html || '').join('\n\n');
+            
             let combinedProblemLatex = problemLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
             let combinedSolutionLatex = solutionLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
             let combinedProblemText = problemLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
@@ -925,14 +941,15 @@ const App = () => {
             setUploadStatus('Migrating Mathpix cropped assets to permanent Firebase Storage...');
             console.log('[Asset Migration] Starting migration process...');
             
-            [combinedProblemLatex, combinedProblemText] = await extractAndUploadMathpixAssets(
-                [combinedProblemLatex, combinedProblemText], 
+            // Migrate assets in both LaTeX and HTML content
+            [combinedProblemLatex, combinedProblemText, combinedProblemHtml] = await extractAndUploadMathpixAssets(
+                [combinedProblemLatex, combinedProblemText, combinedProblemHtml], 
                 problemId, 
                 'problem'
             );
             
-            [combinedSolutionLatex, combinedSolutionText] = await extractAndUploadMathpixAssets(
-                [combinedSolutionLatex, combinedSolutionText], 
+            [combinedSolutionLatex, combinedSolutionText, combinedSolutionHtml] = await extractAndUploadMathpixAssets(
+                [combinedSolutionLatex, combinedSolutionText, combinedSolutionHtml], 
                 problemId, 
                 'solution'
             );
@@ -965,6 +982,8 @@ const App = () => {
                 solutionUrls: solutionUrls,
                 problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
                 solutionLatex: combinedSolutionLatex || 'No LaTeX extracted from solution files',
+                problemHtml: combinedProblemHtml || null,  // Store HTML for direct rendering
+                solutionHtml: combinedSolutionHtml || null,  // Store HTML for direct rendering
                 problemText: combinedProblemText || 'No text extracted from problem files',
                 solutionText: combinedSolutionText || 'No text extracted from solution files',
                 userId: currentUser.uid,
@@ -1456,6 +1475,7 @@ const App = () => {
                                     ) : (
                                         <MathpixContent 
                                             content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'} 
+                                            htmlContent={selectedQuestion.problemHtml}
                                             className="problem-content"
                                         />
                                     )}
@@ -1475,6 +1495,7 @@ const App = () => {
                                     ) : (
                                         <MathpixContent 
                                             content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'} 
+                                            htmlContent={selectedQuestion.solutionHtml}
                                             className="solution-content"
                                         />
                                     )}
