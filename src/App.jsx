@@ -21,24 +21,37 @@ import { preprocessMathpix } from './mathpix/preprocessMathpix';
 
 const SEARCH_DEBOUNCE_MS = 650;
 
-const MathpixContent = ({ content, className = '' }) => {
-  const normalizedContent = useMemo(() => {
-    return preprocessMathpix(content || '');
-  }, [content]);
+const MathpixContent = ({ content, html, className = '' }) => {
+  const hasHtml = Boolean(html && typeof html === 'string' && html.trim().length > 0);
 
+  // Always call useMemo (hooks rule), but skip expensive parsing when HTML is available
+  const normalizedContent = useMemo(() => {
+    if (hasHtml) return '';
+    return preprocessMathpix(content || '');
+  }, [content, hasHtml]);
+
+  // ── Path A: pre-rendered HTML from Mathpix API ──
+  if (hasHtml) {
+    return (
+      <div
+        className={`mathpix-content ${className}`}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    );
+  }
+
+  // ── Path B: fallback — parse MMD with the existing pipeline ──
   return (
     <div className={`mathpix-content ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw]}
         components={{
-          // Override table rendering to use our custom classes
           table: ({ node, ...props }) => (
             <div className="table-wrapper">
               <table className="mathpix-table" {...props} />
             </div>
           ),
-
           th: ({ node, ...props }) => (
             <th
               style={{
@@ -49,12 +62,11 @@ const MathpixContent = ({ content, className = '' }) => {
                 textAlign: "center",
                 verticalAlign: "middle",
                 whiteSpace: "normal",
-                wordWrap: "break-word"
+                wordWrap: "break-word",
               }}
               {...props}
             />
           ),
-
           td: ({ node, ...props }) => (
             <td
               style={{
@@ -63,56 +75,27 @@ const MathpixContent = ({ content, className = '' }) => {
                 textAlign: "center",
                 verticalAlign: "middle",
                 whiteSpace: "normal",
-                wordWrap: "break-word"
+                wordWrap: "break-word",
               }}
               {...props}
             />
           ),
-
-          // Allow our pre-rendered table HTML to pass through
           div: ({ node, className: divClassName, children, ...props }) => {
             if (divClassName === "table-wrapper" || divClassName === "table-block") {
-              return (
-                <div className={divClassName} {...props}>
-                  {children}
-                </div>
-              );
+              return <div className={divClassName} {...props}>{children}</div>;
             }
             return <div {...props}>{children}</div>;
           },
-
           figure: ({ node, ...props }) => (
-            <figure
-              style={{
-                textAlign: "center",
-                margin: "2em 0"
-              }}
-              {...props}
-            />
+            <figure style={{ textAlign: "center", margin: "2em 0" }} {...props} />
           ),
-
           figcaption: ({ node, ...props }) => (
-            <figcaption
-              style={{
-                fontSize: "0.95em",
-                color: "#444",
-                marginTop: "0.75em"
-              }}
-              {...props}
-            />
+            <figcaption style={{ fontSize: "0.95em", color: "#444", marginTop: "0.75em" }} {...props} />
           ),
-
           p: ({ node, ...props }) => (
-            <p
-              style={{
-                margin: "0.5em 0",
-                lineHeight: "1.6"
-              }}
-              {...props}
-            />
+            <p style={{ margin: "0.5em 0", lineHeight: "1.6" }} {...props} />
           ),
-
-          br: ({ node, ...props }) => <br {...props} />
+          br: ({ node, ...props }) => <br {...props} />,
         }}
       >
         {normalizedContent}
@@ -309,7 +292,7 @@ const App = () => {
                 <div className="hero-section">
                     <div className="hero-content">
                         <h1 className="hero-title">The phO Database</h1>
-                        <p className="hero-subtitle">Access a database of physics problems from olympiads and textbooks. Practice and learn from questions from <b>specific topics and competitions.</b></p>
+                        <p className="hero-subtitle">Access a database of physics problems from olympiads, textbooks, and national selection tests. Practice and learn from questions from <b>specific topics and competitions.</b></p>
                         <div className="hero-buttons">
                             <button className="hero-btn primary" onClick={() => setCurrentPage('database')}>Browse Database <i className="fas fa-arrow-right"></i></button>
                             <button className="hero-btn secondary" onClick={() => setCurrentPage('contribute')}>Contribute Problems <i className="fas fa-plus"></i></button>
@@ -725,7 +708,12 @@ const App = () => {
     const [uploadError, setUploadError] = useState(null);
     const [uploadSuccess, setUploadSuccess] = useState(false);
     const [uploadStatus, setUploadStatus] = useState('');
-    const [latexPreview, setLatexPreview] = useState({ problem: '', solution: '' });
+    const [latexPreview, setLatexPreview] = useState({
+    problem: '',
+    solution: '',
+    problemHtml: '',    
+    solutionHtml: '',  
+    });
     const [showLatexPreview, setShowLatexPreview] = useState(false);
     const [subtagInput, setSubtagInput] = useState('');
     const [customTextbook, setCustomTextbook] = useState('');
@@ -824,15 +812,19 @@ const App = () => {
     const handlePreviewLatex = async (type) => {
         const files = type === 'problem' ? formData.problemFiles : formData.solutionFiles;
         if (files.length === 0) { setUploadError(`No ${type} files to preview`); return; }
-        setUploadStatus(`Processing ${type} files for LaTeX preview...`);
+        setUploadStatus(`Processing ${type} files for preview...`);
         setShowLatexPreview(true);
         try {
             const result = await convertToLatex(files[0]);
             if (result.success) {
-                setLatexPreview(prev => ({ ...prev, [type]: result.latex }));
-                setUploadError(null);
+            setLatexPreview(prev => ({
+                ...prev,
+                [type]: result.latex,
+                [`${type}Html`]: result.html || '',   // ← NEW
+            }));
+            setUploadError(null);
             } else {
-                setUploadError(`Failed to convert ${type} file: ${result.error}`);
+            setUploadError(`Failed to convert ${type} file: ${result.error}`);
             }
         } catch (error) {
             setUploadError(`Error processing ${type} file: ${error.message}`);
@@ -917,6 +909,10 @@ const App = () => {
             let combinedProblemText = problemLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
             let combinedSolutionText = solutionLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
             
+            // ── Combine HTML ──
+            let combinedProblemHtml = problemLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
+            let combinedSolutionHtml = solutionLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
+
             const failedProblemFiles = problemLatexResults.filter(r => !r.success);
             const failedSolutionFiles = solutionLatexResults.filter(r => !r.success);
             if (failedProblemFiles.length > 0) console.warn('Some problem files failed to convert:', failedProblemFiles);
@@ -924,98 +920,102 @@ const App = () => {
 
             setUploadStatus('Migrating Mathpix cropped assets to permanent Firebase Storage...');
             console.log('[Asset Migration] Starting migration process...');
-            
+
+            // Migrate assets in MMD/text
             [combinedProblemLatex, combinedProblemText] = await extractAndUploadMathpixAssets(
-                [combinedProblemLatex, combinedProblemText], 
-                problemId, 
-                'problem'
+            [combinedProblemLatex, combinedProblemText],
+            problemId,
+            'problem'
             );
-            
             [combinedSolutionLatex, combinedSolutionText] = await extractAndUploadMathpixAssets(
-                [combinedSolutionLatex, combinedSolutionText], 
-                problemId, 
-                'solution'
+            [combinedSolutionLatex, combinedSolutionText],
+            problemId,
+            'solution'
             );
-            
+
+            // ── NEW: migrate assets in HTML too ──
+            [combinedProblemHtml] = await extractAndUploadMathpixAssets(
+            [combinedProblemHtml], problemId, 'problem'
+            );
+            [combinedSolutionHtml] = await extractAndUploadMathpixAssets(
+            [combinedSolutionHtml], problemId, 'solution'
+            );
+
             setUploadStatus('Saving to database...');
-            
-            // Determine the source field to use
+
+            // Determine the source field
             let source = '';
-            if (formData.sourceType === 'competition') {
-                source = formData.competition;
-            } else if (formData.sourceType === 'textbook') {
-                source = formData.textbook;
-            } else if (formData.sourceType === 'selection_test') {
-                source = formData.selectionTest;
-            }
-            
+            if (formData.sourceType === 'competition') source = formData.competition;
+            else if (formData.sourceType === 'textbook') source = formData.textbook;
+            else if (formData.sourceType === 'selection_test') source = formData.selectionTest;
+
             const problemData = {
-                title: formData.title,
-                sourceType: formData.sourceType,
-                competition: formData.sourceType === 'competition' ? formData.competition : null,
-                textbook: formData.sourceType === 'textbook' ? formData.textbook : null,
-                selectionTest: formData.sourceType === 'selection_test' ? formData.selectionTest : null,
-                source: source, // For backward compatibility and display
-                difficulty: formData.difficulty,
-                topic: formData.topic,
-                year: parseInt(formData.year) || null,
-                problemSource: formData.problemSource,
-                subtags: formData.subtags,
-                problemStatementUrls: problemUrls,
-                solutionUrls: solutionUrls,
-                problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
-                solutionLatex: combinedSolutionLatex || 'No LaTeX extracted from solution files',
-                problemText: combinedProblemText || 'No text extracted from problem files',
-                solutionText: combinedSolutionText || 'No text extracted from solution files',
-                userId: currentUser.uid,
-                userEmail: currentUser.email,
-                userDisplayName: currentUser.displayName || currentUser.email?.split('@')[0],
-                status: 'pending_review',
-                fileCount: { problem: problemUrls.length, solution: solutionUrls.length },
-                ocrConfidence: {
-                    problem: problemLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(problemLatexResults.filter(r => r.success).length, 1),
-                    solution: solutionLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(solutionLatexResults.filter(r => r.success).length, 1)
-                }
+            title: formData.title,
+            sourceType: formData.sourceType,
+            competition: formData.sourceType === 'competition' ? formData.competition : null,
+            textbook: formData.sourceType === 'textbook' ? formData.textbook : null,
+            selectionTest: formData.sourceType === 'selection_test' ? formData.selectionTest : null,
+            source: source,
+            difficulty: formData.difficulty,
+            topic: formData.topic,
+            year: parseInt(formData.year) || null,
+            problemSource: formData.problemSource,
+            subtags: formData.subtags,
+            problemStatementUrls: problemUrls,
+            solutionUrls: solutionUrls,
+            problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
+            solutionLatex: combinedSolutionLatex || 'No LaTeX extracted from solution files',
+            problemText: combinedProblemText || 'No text extracted from problem files',
+            solutionText: combinedSolutionText || 'No text extracted from solution files',
+            problemHtml: combinedProblemHtml || '',     // ← NEW
+            solutionHtml: combinedSolutionHtml || '',   // ← NEW
+            userId: currentUser.uid,
+            userEmail: currentUser.email,
+            userDisplayName: currentUser.displayName || currentUser.email?.split('@')[0],
+            status: 'pending_review',
+            fileCount: { problem: problemUrls.length, solution: solutionUrls.length },
+            ocrConfidence: {
+                problem: problemLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(problemLatexResults.filter(r => r.success).length, 1),
+                solution: solutionLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(solutionLatexResults.filter(r => r.success).length, 1),
+            },
             };
-            
+
             const result = await addProblemToFirestore(problemData);
-            
+
             if (result.success) {
-                setUploadSuccess(true);
-                setUploadStatus('Success!');
-                setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
-                setLatexPreview({ problem: combinedProblemLatex, solution: combinedSolutionLatex });
-                setShowLatexPreview(true);
-                
-                // Refresh the problem list after successful submission
-                const refreshResult = await fetchProblemsFromFirestore();
-                if (refreshResult.success) {
-                    setQuestionsDB(refreshResult.problems);
-                }
-                
-                setTimeout(() => {
-                    setFormData({ 
-                        title: '', 
-                        sourceType: 'competition',
-                        competition: '', 
-                        textbook: '',
-                        selectionTest: '',
-                        difficulty: '', 
-                        topic: '', 
-                        year: '', 
-                        problemSource: '', 
-                        subtags: [], 
-                        problemFiles: [], 
-                        solutionFiles: [] 
-                    });
-                    setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
-                    setUploadSuccess(false);
-                    setUploadStatus('');
-                    setShowLatexPreview(false);
-                    setLatexPreview({ problem: '', solution: '' });
-                }, 5000);
+            setUploadSuccess(true);
+            setUploadStatus(result.htmlDropped
+                ? 'Success! (Document was too large for inline HTML — saved as Mathpix Markdown instead.)'
+                : 'Success!'
+            );
+            setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
+            setLatexPreview({
+                problem: combinedProblemLatex,
+                solution: combinedSolutionLatex,
+                problemHtml: result.htmlDropped ? '' : combinedProblemHtml,   // ← reflect what was actually saved
+                solutionHtml: result.htmlDropped ? '' : combinedSolutionHtml,
+            });
+            setShowLatexPreview(true);
+
+            const refreshResult = await fetchProblemsFromFirestore();
+            if (refreshResult.success) {
+                setQuestionsDB(refreshResult.problems);
+            }
+
+            setTimeout(() => {
+                setFormData({
+                title: '', sourceType: 'competition', competition: '', textbook: '', selectionTest: '',
+                difficulty: '', topic: '', year: '', problemSource: '', subtags: [],
+                problemFiles: [], solutionFiles: [],
+                });
+                setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
+                setUploadSuccess(false);
+                setUploadStatus('');
+                setShowLatexPreview(false);
+                setLatexPreview({ problem: '', solution: '', problemHtml: '', solutionHtml: '' });
+            }, 5000);
             } else {
-                throw new Error(result.error);
+            throw new Error(result.error);
             }
         } catch (error) {
             console.error('Error submitting problem:', error);
@@ -1068,7 +1068,10 @@ const App = () => {
                                 <div className="latex-section">
                                     <h4>Problem Statement Preview</h4>
                                     <div className="preview-box">
-                                        <MathpixContent content={latexPreview.problem} />
+                                        <MathpixContent
+                                            content={latexPreview.problem}
+                                            html={latexPreview.problemHtml}
+                                        />
                                     </div>
                                     <h4>Raw LaTeX/Markdown (.mmd)</h4>
                                     <pre className="latex-code">{latexPreview.problem}</pre>
@@ -1078,7 +1081,10 @@ const App = () => {
                                 <div className="latex-section">
                                     <h4>Solution Preview</h4>
                                     <div className="preview-box">
-                                        <MathpixContent content={latexPreview.solution} />
+                                        <MathpixContent
+                                            content={latexPreview.solution}
+                                            html={latexPreview.solutionHtml}
+                                        />
                                     </div>
                                     <h4>Raw LaTeX/Markdown (.mmd)</h4>
                                     <pre className="latex-code">{latexPreview.solution}</pre>
@@ -1448,37 +1454,45 @@ const App = () => {
                                 {selectedQuestion.year && <span className="competition-badge" style={{ background: '#f3f4f6', color: '#4b5563' }}>{selectedQuestion.year}</span>}
                             </div>
                             
+                            {/* Problem Statement */}
                             <div className="modal-section">
-                                <h4><i className="fas fa-question-circle" style={{ color: '#4f46e5' }}></i> Problem Statement</h4>
-                                <div className="problem-text">
-                                    {showRawLatex ? (
-                                        <pre className="latex-raw">{selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}</pre>
-                                    ) : (
-                                        <MathpixContent 
-                                            content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'} 
-                                            className="problem-content"
-                                        />
-                                    )}
-                                </div>
-                                {selectedQuestion.problemSource && (
-                                    <div className="problem-source" style={{ marginTop: '8px', fontSize: '0.9rem', color: '#6b7280' }}>
-                                        <i className="fas fa-book" style={{ marginRight: '4px' }}></i> Source: {selectedQuestion.problemSource}
-                                    </div>
+                            <h4><i className="fas fa-question-circle" style={{ color: '#4f46e5' }}></i> Problem Statement</h4>
+                            <div className="problem-text">
+                                {showRawLatex ? (
+                                    <pre className="latex-raw">
+                                        {selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
+                                    </pre>
+                                ) : (
+                                    <MathpixContent
+                                        content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
+                                        html={selectedQuestion.problemHtml}
+                                        className="problem-content"
+                                    />
                                 )}
                             </div>
-                            
-                            <div className="modal-section">
-                                <h4><i className="fas fa-lightbulb" style={{ color: '#f59e0b' }}></i> Solution / Answer</h4>
-                                <div className="solution-text">
-                                    {showRawLatex ? (
-                                        <pre className="latex-raw">{selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}</pre>
-                                    ) : (
-                                        <MathpixContent 
-                                            content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'} 
-                                            className="solution-content"
-                                        />
-                                    )}
+                            {selectedQuestion.problemSource && (
+                                <div className="problem-source" style={{ marginTop: '8px', fontSize: '0.9rem', color: '#6b7280' }}>
+                                <i className="fas fa-book" style={{ marginRight: '4px' }}></i> Source: {selectedQuestion.problemSource}
                                 </div>
+                            )}
+                            </div>
+
+                            {/* Solution */}
+                            <div className="modal-section">
+                            <h4><i className="fas fa-lightbulb" style={{ color: '#f59e0b' }}></i> Solution / Answer</h4>
+                            <div className="solution-text">
+                                {showRawLatex ? (
+                                    <pre className="latex-raw">
+                                        {selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
+                                    </pre>
+                                ) : (
+                                    <MathpixContent
+                                        content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
+                                        html={selectedQuestion.solutionHtml}
+                                        className="solution-content"
+                                    />
+                                )}
+                            </div>
                             </div>
                             
                             {selectedQuestion.subtags && selectedQuestion.subtags.length > 0 && (

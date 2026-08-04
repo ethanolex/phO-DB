@@ -32,6 +32,35 @@ console.log('VITE_FIREBASE_API_KEY:', import.meta.env.VITE_FIREBASE_API_KEY ? '�
 console.log('VITE_MATHPIX_APP_ID:', import.meta.env.VITE_MATHPIX_APP_ID ? '✓ Present' : '✗ Missing');
 console.log('VITE_MATHPIX_API_KEY:', import.meta.env.VITE_MATHPIX_API_KEY ? '✓ Present' : '✗ Missing');
 
+// ============================================================================
+// HELPER: Estimate Firestore document size (bytes)
+// ============================================================================
+const encoder = new TextEncoder();
+
+const estimateDocumentSize = (obj) => {
+  const measure = (value) => {
+    if (value === null || value === undefined) return 1;
+    if (typeof value === 'string') return encoder.encode(value).length;
+    if (typeof value === 'number') return 8;
+    if (typeof value === 'boolean') return 1;
+    if (value instanceof Date) return 8;
+    if (Array.isArray(value)) {
+      return value.reduce((sum, item) => sum + measure(item) + 1, 0);
+    }
+    if (typeof value === 'object') {
+      return Object.entries(value).reduce(
+        (sum, [k, v]) => sum + k.length + measure(v) + 32, // ~32 bytes overhead per field
+        0
+      );
+    }
+    return 8;
+  };
+  return measure(obj);
+};
+
+// Firestore hard limit is 1 MiB (1,048,576 bytes). Use a safety margin.
+const MAX_FIRESTORE_DOC_BYTES = 900 * 1024; // 900 KB
+
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
     authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -113,16 +142,78 @@ export const resetPassword = async (email) => {
 };
 
 export const addProblemToFirestore = async (problemData) => {
-    try {
-        const docRef = await addDoc(collection(db, 'Problems'), {
-            ...problemData,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-        });
-        return { success: true, id: docRef.id };
-    } catch (error) {
-        return { success: false, error: error.message };
+  try {
+    let dataToSave = { ...problemData };
+    let htmlDropped = false;
+
+    // Check size including the timestamp fields Firestore will add
+    const estimatedSize = estimateDocumentSize({
+      ...dataToSave,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    if (estimatedSize > MAX_FIRESTORE_DOC_BYTES) {
+      console.warn(
+        `[Firestore] Document too large (${Math.round(estimatedSize / 1024)} KB). ` +
+        `Dropping HTML fields and falling back to MMD-only.`
+      );
+      delete dataToSave.problemHtml;
+      delete dataToSave.solutionHtml;
+      htmlDropped = true;
+
+      const newSize = estimateDocumentSize({
+        ...dataToSave,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      if (newSize > MAX_FIRESTORE_DOC_BYTES) {
+        return {
+          success: false,
+          error:
+            `Document exceeds Firestore's 1 MiB limit even without HTML ` +
+            `(${Math.round(newSize / 1024)} KB). Consider splitting the problem into smaller parts.`,
+        };
+      }
     }
+
+    const docRef = await addDoc(collection(db, 'Problems'), {
+      ...dataToSave,
+      htmlDropped, // flag so you know this doc uses MMD-only rendering
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    return { success: true, id: docRef.id, htmlDropped };
+  } catch (error) {
+    // Safety net: if Firestore rejects for size, retry without HTML
+    const isSizeError =
+      error.message &&
+      (error.message.includes('exceeds the maximum allowed size') ||
+       error.code === 'invalid-argument');
+
+    if (isSizeError && (problemData.problemHtml || problemData.solutionHtml)) {
+      console.warn('[Firestore] Write rejected for size. Retrying without HTML.');
+      try {
+        const fallbackData = { ...problemData };
+        delete fallbackData.problemHtml;
+        delete fallbackData.solutionHtml;
+
+        const docRef = await addDoc(collection(db, 'Problems'), {
+          ...fallbackData,
+          htmlDropped: true,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return { success: true, id: docRef.id, htmlDropped: true };
+      } catch (retryError) {
+        return { success: false, error: retryError.message };
+      }
+    }
+
+    return { success: false, error: error.message };
+  }
 };
 
 export const uploadFileToStorage = (file, path, onProgress) => {
@@ -350,91 +441,136 @@ export const extractAndUploadMathpixAssets = async (contents, problemId, fileTyp
 };
 
 export const convertToLatex = async (file, onProgress) => {
-    try {
-        if (!file) return { success: false, error: 'No file provided' };
-        if (!isMathpixConfigured) return { success: false, error: 'Mathpix API credentials not configured.' };
+  try {
+    if (!file) return { success: false, error: 'No file provided' };
+    if (!isMathpixConfigured) return { success: false, error: 'Mathpix API credentials not configured.' };
 
-        if (file.type === 'application/pdf') {
-            const fileUrl = await uploadToTempStorage(file);
-            const response = await axios.post(
-                'https://api.mathpix.com/v3/pdf',
-                {
-                    url: fileUrl,
-                    conversion_formats: { "tex.zip": true },
-                    options: { formats: ['latex', 'text'], math_inline_delimiters: ['$', '$'], math_display_delimiters: ['$$', '$$'] }
-                },
-                { headers: { 'app_id': MATHpIX_APP_ID, 'app_key': MATHpIX_API_KEY, 'Content-Type': 'application/json' }, timeout: 60000 }
-            );
+    if (file.type === 'application/pdf') {
+      const fileUrl = await uploadToTempStorage(file);
 
-            if (response.status === 200 && response.data && response.data.pdf_id) {
-                const pdfId = response.data.pdf_id;
-                if (onProgress) onProgress(25);
-                
-                const statusResult = await pollForPdfCompletion(pdfId, onProgress);
-                if (!statusResult.completed) return { success: false, error: statusResult.error || 'PDF processing failed' };
-                
-                if (onProgress) onProgress(75);
-                
-                const mmdResult = await downloadPdfResults(pdfId, 'mmd');
-                if (onProgress) onProgress(100);
-                
-                if (mmdResult.success) {
-                    return { success: true, latex: mmdResult.content, text: mmdResult.content, confidence: 100, rawResponse: { pdf_id: pdfId, format: 'mmd' } };
-                }
-                
-                const texResult = await downloadPdfResults(pdfId, 'tex.zip');
-                if (texResult.success) {
-                    return { success: true, latex: texResult.content, text: texResult.content, confidence: 100 };
-                }
-                
-                return { success: false, error: mmdResult.error || 'Failed to download PDF results' };
-            }
-            return { success: false, error: 'Failed to upload PDF to Mathpix' };
+      const response = await axios.post(
+        'https://api.mathpix.com/v3/pdf',
+        {
+          url: fileUrl,
+          conversion_formats: {
+            "tex.zip": true,
+            "html": true,          // ← CHANGED: request HTML
+          },
+          options: {
+            formats: ['latex', 'text'],
+            math_inline_delimiters: ['$', '$'],
+            math_display_delimiters: ['$$', '$$'],
+          },
+        },
+        {
+          headers: {
+            'app_id': MATHpIX_APP_ID,
+            'app_key': MATHpIX_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000,
+        }
+      );
+
+      if (response.status === 200 && response.data?.pdf_id) {
+        const pdfId = response.data.pdf_id;
+        if (onProgress) onProgress(25);
+
+        const statusResult = await pollForPdfCompletion(pdfId, onProgress);
+        if (!statusResult.completed) {
+          return { success: false, error: statusResult.error || 'PDF processing failed' };
+        }
+        if (onProgress) onProgress(75);
+
+        // Download MMD and HTML in parallel
+        const [mmdResult, htmlResult] = await Promise.all([
+          downloadPdfResults(pdfId, 'mmd'),
+          downloadPdfResults(pdfId, 'html'),   // ← CHANGED
+        ]);
+
+        if (onProgress) onProgress(100);
+
+        if (mmdResult.success || htmlResult.success) {
+          return {
+            success: true,
+            latex: mmdResult.content || '',
+            html: htmlResult.content || '',     // ← CHANGED
+            text: mmdResult.content || '',
+            confidence: 100,
+            rawResponse: { pdf_id: pdfId },
+          };
         }
 
-        const fileUrl = await uploadToTempStorage(file);
-        const response = await axios.post(
-            'https://api.mathpix.com/v3/text',
-            {
-                url: fileUrl,
-                formats: ['latex', 'text'],
-                math_inline_delimiters: ['$', '$'],
-                math_display_delimiters: ['$$', '$$'],
-                enable_table_detection: true,
-                enable_diagram_detection: true
-            },
-            { headers: { 'app_id': MATHpIX_APP_ID, 'app_key': MATHpIX_API_KEY, 'Content-Type': 'application/json' }, timeout: 60000 }
-        );
-
-        if (response.status === 200 && response.data) {
-            let latexText = '';
-            let plainText = '';
-            let confidence = 0;
-
-            if (response.data.latex) latexText = Array.isArray(response.data.latex) ? response.data.latex.join('\n\n') : response.data.latex;
-            if (response.data.text) plainText = Array.isArray(response.data.text) ? response.data.text.join('\n\n') : response.data.text;
-            if (response.data.confidence) confidence = response.data.confidence;
-
-            if (latexText || plainText) {
-                return { success: true, latex: latexText || plainText || 'No content extracted', text: plainText || latexText || 'No content extracted', confidence: confidence || 0, rawResponse: response.data };
-            }
+        // Last resort: try tex.zip
+        const texResult = await downloadPdfResults(pdfId, 'tex.zip');
+        if (texResult.success) {
+          return { success: true, latex: texResult.content, text: texResult.content, confidence: 100 };
         }
-
-        return { success: false, error: 'No LaTeX or text content found in API response', rawResponse: response.data };
-    } catch (error) {
-        let errorMessage = 'Failed to convert to LaTeX';
-        if (error.response) {
-            if (error.response.status === 401) errorMessage = 'Invalid Mathpix API credentials.';
-            else if (error.response.status === 429) errorMessage = 'Mathpix API rate limit exceeded.';
-            else if (error.response.status === 413) errorMessage = 'File too large for Mathpix API.';
-            else errorMessage = `Mathpix API error: ${error.response.status}`;
-        } else if (error.request) {
-            errorMessage = 'No response from Mathpix API. Check internet connection.';
-        } else {
-            errorMessage = error.message || 'Unknown error occurred';
-        }
-        return { success: false, error: errorMessage, details: error.response?.data || error.message };
+        return { success: false, error: mmdResult.error || 'Failed to download PDF results' };
+      }
+      return { success: false, error: 'Failed to upload PDF to Mathpix' };
     }
+
+    // ── Image path ──────────────────────────────────────────────
+    const fileUrl = await uploadToTempStorage(file);
+
+    const response = await axios.post(
+      'https://api.mathpix.com/v3/text',
+      {
+        url: fileUrl,
+        formats: ['text', 'latex', 'html'],   // ← CHANGED: added 'html'
+        math_inline_delimiters: ['$', '$'],
+        math_display_delimiters: ['$$', '$$'],
+        enable_table_detection: true,
+        enable_diagram_detection: true,
+      },
+      {
+        headers: {
+          'app_id': MATHpIX_APP_ID,
+          'app_key': MATHpIX_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        timeout: 60000,
+      }
+    );
+
+    if (response.status === 200 && response.data) {
+      let latexText = '';
+      let plainText = '';
+      let htmlContent = '';                    // ← CHANGED
+      let confidence = 0;
+
+      if (response.data.latex) latexText = Array.isArray(response.data.latex) ? response.data.latex.join('\n\n') : response.data.latex;
+      if (response.data.text) plainText = Array.isArray(response.data.text) ? response.data.text.join('\n\n') : response.data.text;
+      if (response.data.html) htmlContent = Array.isArray(response.data.html) ? response.data.html.join('\n') : response.data.html;  // ← CHANGED
+      if (response.data.confidence) confidence = response.data.confidence;
+
+      if (latexText || plainText || htmlContent) {
+        return {
+          success: true,
+          latex: latexText || plainText || '',
+          html: htmlContent,                   // ← CHANGED
+          text: plainText || latexText || '',
+          confidence: confidence || 0,
+          rawResponse: response.data,
+        };
+      }
+    }
+    return { success: false, error: 'No content found in API response', rawResponse: response.data };
+  } catch (error) {
+    let errorMessage = 'Failed to convert to LaTeX';
+    if (error.response) {
+      if (error.response.status === 401) errorMessage = 'Invalid Mathpix API credentials.';
+      else if (error.response.status === 429) errorMessage = 'Mathpix API rate limit exceeded.';
+      else if (error.response.status === 413) errorMessage = 'File too large for Mathpix API.';
+      else errorMessage = `Mathpix API error: ${error.response.status}`;
+    } else if (error.request) {
+      errorMessage = 'No response from Mathpix API. Check internet connection.';
+    } else {
+      errorMessage = error.message || 'Unknown error occurred';
+    }
+    return { success: false, error: errorMessage, details: error.response?.data || error.message };
+  }
 };
 
 export const processFilesWithMathpix = async (files, onProgress) => {
@@ -463,39 +599,41 @@ export const processFilesWithMathpix = async (files, onProgress) => {
 };
 
 export const fetchProblemsFromFirestore = async () => {
-    try {
-        const problemsCollection = collection(db, 'Problems');
-        const problemsQuery = query(problemsCollection, orderBy('createdAt', 'desc'));
-        const querySnapshot = await getDocs(problemsQuery);
-        
-        const problems = [];
-        querySnapshot.forEach((doc) => {
-            const data = doc.data();
-            problems.push({
-                id: doc.id,
-                competition: data.competition || '',
-                difficulty: data.difficulty || '',
-                topic: data.topic || '',
-                title: data.title || '',
-                text: data.problemLatex || data.problemText || 'No problem statement available',
-                year: data.year || null,
-                solution: data.solutionLatex || data.solutionText || 'No solution available',
-                problemSource: data.problemSource || '',
-                subtags: data.subtags || [],
-                problemLatex: data.problemLatex || '',
-                solutionLatex: data.solutionLatex || '',
-                problemStatementUrls: data.problemStatementUrls || [],
-                solutionUrls: data.solutionUrls || [],
-                createdAt: data.createdAt,
-                updatedAt: data.updatedAt
-            });
-        });
-        
-        return { success: true, problems };
-    } catch (error) {
-        console.error('Error fetching problems:', error);
-        return { success: false, error: error.message };
-    }
+  try {
+    const problemsCollection = collection(db, 'Problems');
+    const problemsQuery = query(problemsCollection, orderBy('createdAt', 'desc'));
+    const querySnapshot = await getDocs(problemsQuery);
+
+    const problems = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      problems.push({
+        id: doc.id,
+        competition: data.competition || '',
+        difficulty: data.difficulty || '',
+        topic: data.topic || '',
+        title: data.title || '',
+        text: data.problemLatex || data.problemText || 'No problem statement available',
+        year: data.year || null,
+        solution: data.solutionLatex || data.solutionText || 'No solution available',
+        problemSource: data.problemSource || '',
+        subtags: data.subtags || [],
+        problemLatex: data.problemLatex || '',
+        solutionLatex: data.solutionLatex || '',
+        problemHtml: data.problemHtml || '',       // ← CHANGED
+        solutionHtml: data.solutionHtml || '',     // ← CHANGED
+        htmlDropped: data.htmlDropped || false,    // ← CHANGED
+        problemStatementUrls: data.problemStatementUrls || [],
+        solutionUrls: data.solutionUrls || [],
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+      });
+    });
+    return { success: true, problems };
+  } catch (error) {
+    console.error('Error fetching problems:', error);
+    return { success: false, error: error.message };
+  }
 };
 
 export { auth, onAuthStateChanged, db };

@@ -3070,3 +3070,48 @@ select[name="textbook"]:disabled {
     font-size: 0.75rem;
     margin-top: 0.25rem;
 }
+
+/* Mathpix HTML rendering */
+.mathpix-content {
+  line-height: 1.7;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.mathpix-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1em auto;
+  border-radius: 4px;
+}
+
+.mathpix-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+
+.mathpix-content th,
+.mathpix-content td {
+  border: 1px solid #d1d5db;
+  padding: 8px 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.mathpix-content th {
+  background-color: #f8fafc;
+  font-weight: 600;
+}
+
+.mathpix-content math {
+  font-size: 1.1em;
+}
+
+/* Ensure MathML renders properly */
+.mathpix-content math[display="block"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
