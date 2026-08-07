@@ -5,7 +5,7 @@
 3. URL pointing to file location is fetched and sent to API
 4. API processes the image and converts content into LaTeX/Markdown (MMD), as well as HTML
   - Detected illustrations are converted into cropped assets and temporarily hosted in Mathpix CDN server 
-  - Cropped assets are routed to /illustrations on firebase storage
+  - Cropped assets are routed to problems/problem_Id/assets/ on firebase storage
   - Temporary CDN URLs of the cropped assets in the MMD and HTML are replaced with the corresponding permanent firebase storage URL
   - Check if the converted MMD + HTML exceed the 1MiB limit for Firestore documents - if so, the HTML is dropped and only MMD is stored in the database
 5. MMD is displayed to user for checking; text is naturally rendered
