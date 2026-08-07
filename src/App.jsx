@@ -241,7 +241,7 @@ const App = () => {
             <div className="nav-container">
                 <div className="nav-brand" onClick={() => setCurrentPage('home')}>
                     <i className="fas fa-atom"></i>
-                    <span>Chem-DB</span>
+                    <span>phO-DB</span>
                 </div>
                 <div className="nav-menu">
                     <button className={`nav-link ${currentPage === 'home' ? 'active' : ''}`} onClick={() => setCurrentPage('home')}>
@@ -305,7 +305,7 @@ const App = () => {
                     </div>
                 </div>
                 <div className="features-section">
-                    <h2>Why Choose Chem-DB?</h2>
+                    <h2>Why Choose phO-DB?</h2>
                     <div className="features-grid">
                         <div className="feature-card"><i className="fas fa-search"></i><h3>Advanced Filtering</h3><p>Filter problems by competition, difficulty, topic, and search by keywords</p></div>
                         <div className="feature-card"><i className="fas fa-lightbulb"></i><h3>Detailed Solutions</h3><p>Each problem comes with a comprehensive solution and explanation</p></div>
