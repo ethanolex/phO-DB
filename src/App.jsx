@@ -5,6 +5,7 @@ import {
     loginUser, 
     resetPassword, 
     addProblemToFirestore, 
+    updateProblemInFirestore, // <-- ADDED: You need to implement this in firebase.js
     uploadProblemFiles,
     processFilesWithMathpix,
     convertToLatex,
@@ -24,13 +25,11 @@ const SEARCH_DEBOUNCE_MS = 650;
 const MathpixContent = ({ content, html, className = '' }) => {
   const hasHtml = Boolean(html && typeof html === 'string' && html.trim().length > 0);
 
-  // Always call useMemo (hooks rule), but skip expensive parsing when HTML is available
   const normalizedContent = useMemo(() => {
     if (hasHtml) return '';
     return preprocessMathpix(content || '');
   }, [content, hasHtml]);
 
-  // ── Path A: pre-rendered HTML from Mathpix API ──
   if (hasHtml) {
     return (
       <div
@@ -40,7 +39,6 @@ const MathpixContent = ({ content, html, className = '' }) => {
     );
   }
 
-  // ── Path B: fallback — parse MMD with the existing pipeline ──
   return (
     <div className={`mathpix-content ${className}`}>
       <ReactMarkdown
@@ -108,7 +106,6 @@ const App = () => {
     const [currentPage, setCurrentPage] = useState('database');
     const { currentUser, loading: authLoading, logout, error: authError, setError } = useAuth();
     
-    // State for problems from Firestore
     const [questionsDB, setQuestionsDB] = useState([]);
     const [loadingProblems, setLoadingProblems] = useState(true);
     const [problemsError, setProblemsError] = useState(null);
@@ -127,7 +124,12 @@ const App = () => {
     const [selectedQuestion, setSelectedQuestion] = useState(null);
     const [showRawLatex, setShowRawLatex] = useState(false);
     
-    // Fetch problems from Firestore on component mount
+    // State for editing a problem
+    const [editingQuestion, setEditingQuestion] = useState(null);
+
+    // State for modal fullscreen
+    const [isModalFullScreen, setIsModalFullScreen] = useState(false);
+    
     useEffect(() => {
         const loadProblems = async () => {
             setLoadingProblems(true);
@@ -152,7 +154,6 @@ const App = () => {
         loadProblems();
     }, []);
 
-    // Compute filter options from the loaded data
     const allCompetitions = useMemo(() => {
         return [...new Set(questionsDB.map(q => q.competition).filter(Boolean))].sort();
     }, [questionsDB]);
@@ -330,7 +331,6 @@ const App = () => {
             return () => clearTimeout(timer);
         }, [localSearchQuery, setSearchQuery]);
         
-        // Show loading state
         if (loadingProblems) {
             return (
                 <div className="loading-screen">
@@ -340,7 +340,6 @@ const App = () => {
             );
         }
         
-        // Show error state
         if (problemsError) {
             return (
                 <div className="error-state">
@@ -354,7 +353,6 @@ const App = () => {
             );
         }
         
-        // Prepare visible items with "See More" logic
         const visibleCompetitions = showAllCompetitions ? allCompetitions : allCompetitions.slice(0, 6);
         const visibleTopics = showAllTopics ? allTopics : allTopics.slice(0, 6);
         const visibleSubtags = showAllSubtags ? allSubtags : allSubtags.slice(0, 6);
@@ -378,7 +376,6 @@ const App = () => {
                                 <span className="search-status">{isSearchPending ? 'Searching…' : '\u00A0'}</span>
                             </div>
                             
-                            {/* Competitions Filter */}
                             <div className="filter-group">
                                 <div className="filter-group-title">
                                     <i className="fas fa-trophy"></i> Competition
@@ -406,7 +403,6 @@ const App = () => {
                                 )}
                             </div>
                             
-                            {/* Difficulties Filter */}
                             <div className="filter-group">
                                 <div className="filter-group-title">
                                     <i className="fas fa-chart-line"></i> Difficulty
@@ -425,7 +421,6 @@ const App = () => {
                                 </div>
                             </div>
                             
-                            {/* Topics Filter */}
                             <div className="filter-group">
                                 <div className="filter-group-title">
                                     <i className="fas fa-atom"></i> Topic
@@ -453,7 +448,6 @@ const App = () => {
                                 )}
                             </div>
                             
-                            {/* Subtag Filter */}
                             {allSubtags.length > 0 && (
                                 <div className="filter-group">
                                     <div className="filter-group-title">
@@ -512,7 +506,7 @@ const App = () => {
                                         <span key={subtag} className="filter-tag subtag-filter-tag">{subtag}<button onClick={() => toggleFilter(subtag, selectedSubtags, setSelectedSubtags)}><i className="fas fa-times-circle"></i></button></span>
                                     ))}
                                     {searchQuery && (
-                                        <span className="filter-tag">“{searchQuery}”<button onClick={() => { setSearchQuery(""); setLocalSearchQuery(""); }}><i className="fas fa-times-circle"></i></button></span>
+                                        <span className="filter-tag">"{searchQuery}"<button onClick={() => { setSearchQuery(""); setLocalSearchQuery(""); }}><i className="fas fa-times-circle"></i></button></span>
                                     )}
                                 </div>
                             )}
@@ -541,7 +535,6 @@ const App = () => {
                                                 <div className="card-topic"><i className="fas fa-tag"></i><span>{question.topic}</span></div>
                                                 <p className="card-text">{question.text}</p>
                                                 
-                                                {/* Display subtags */}
                                                 {question.subtags && question.subtags.length > 0 && (
                                                     <div className="card-subtags">
                                                         {question.subtags.slice(0, 5).map((subtag, index) => (
@@ -687,731 +680,689 @@ const App = () => {
         );
     }, [loginUser, registerUser, resetPassword, setCurrentPage]);
     
-    const ContributePage = useCallback(() => {
-    const { currentUser } = useAuth();
-    const [formData, setFormData] = useState({
-        title: '', 
-        sourceType: 'competition', // 'competition', 'textbook', or 'selection_test'
-        competition: '', 
-        textbook: '',
-        selectionTest: '',
-        difficulty: '', 
-        topic: '', 
-        year: '', 
-        problemSource: '', 
-        subtags: [], 
-        problemFiles: [], 
-        solutionFiles: []
-    });
-    const [uploadProgress, setUploadProgress] = useState({ problem: 0, solution: 0, ocr: 0, overall: 0 });
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [uploadError, setUploadError] = useState(null);
-    const [uploadSuccess, setUploadSuccess] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState('');
-    const [latexPreview, setLatexPreview] = useState({
-    problem: '',
-    solution: '',
-    problemHtml: '',    
-    solutionHtml: '',  
-    });
-    const [showLatexPreview, setShowLatexPreview] = useState(false);
-    const [subtagInput, setSubtagInput] = useState('');
-    const [customTextbook, setCustomTextbook] = useState('');
-    const [customSelectionTest, setCustomSelectionTest] = useState('');
-    
-    const problemFileInputRef = useRef(null);
-    const solutionFileInputRef = useRef(null);
-    
-    // Predefined list of common physics textbooks
-    const textbookOptions = [
-        "Halliday, Resnick, Walker - Fundamentals of Physics",
-        "Young & Freedman - University Physics",
-        "Feynman - The Feynman Lectures on Physics",
-        "Kleppner & Kolenkow - An Introduction to Mechanics",
-        "Morin - Introduction to Classical Mechanics",
-        "Purcell - Electricity and Magnetism",
-        "Griffiths - Introduction to Electrodynamics",
-        "Schroeder - An Introduction to Thermal Physics",
-        "Hecht - Optics",
-        "Pedrotti - Introduction to Optics",
-        "Fowles - Introduction to Modern Optics",
-        "Krane - Modern Physics",
-        "舒幼生、胡望雨、陈秉乾 - 物理学难题集萃",
-        "Others - Specify in problem source"
-    ];
-    
-    // Predefined list of selection tests
-    const selectionTestOptions = [
-        "Phase I - Test 1",
-        "Phase I - Test 2",
-        "Phase II - Test 1",
-        "Phase II - Test 2",
-        "Phase II - Test 3",
-        "Phase II - Test 4",
-        "Others - Specify in problem source"
-    ];
-    
-    const suggestedSubtags = [
-        "Newton's Laws", "Kinematics", "Dynamics", "Work & Energy", "Momentum", "Rotational Motion", "Simple Harmonic Motion", "Oscillations", "Waves", "Gravitation", "Fluid Mechanics",
-        "Electrostatics", "Electric Fields", "Magnetic Fields", "Electromagnetic Induction", "Circuit Analysis", "AC Circuits", "Maxwell's Equations", "Electromagnetic Waves",
-        "Kinetic Theory", "Thermodynamic Cycles", "Heat Transfer", "Thermal Expansion", "Entropy", "Statistical Mechanics", "Phase Transitions",
-        "Geometrical Optics", "Wave Optics", "Interference", "Diffraction", "Polarization", "Optical Instruments", "Photometry",
-        "Quantum Mechanics", "Atomic Physics", "Nuclear Physics", "Particle Physics", "Relativity", "Photoelectric Effect", "Matter Waves", "Radioactivity",
-        "Vectors", "Calculus", "Complex Numbers", "Numerical Methods", "Error Analysis"
-    ];
-    
-    if (!currentUser) {
+        const ContributePage = useCallback(() => {
+        const { currentUser } = useAuth();
+        const isEditMode = Boolean(editingQuestion);
+        
+        const [formData, setFormData] = useState({
+            title: isEditMode ? editingQuestion.title : '', 
+            sourceType: isEditMode ? (editingQuestion.sourceType || 'competition') : 'competition',
+            competition: isEditMode ? (editingQuestion.competition || '') : '', 
+            textbook: isEditMode ? (editingQuestion.textbook || '') : '',
+            selectionTest: isEditMode ? (editingQuestion.selectionTest || '') : '',
+            difficulty: isEditMode ? (editingQuestion.difficulty || '') : '', 
+            topic: isEditMode ? (editingQuestion.topic || '') : '', 
+            year: isEditMode ? (editingQuestion.year || '') : '', 
+            problemSource: isEditMode ? (editingQuestion.problemSource || '') : '', 
+            subtags: isEditMode ? (editingQuestion.subtags || []) : [], 
+            problemFiles: [], 
+            solutionFiles: [],
+            existingProblemUrls: isEditMode ? (editingQuestion.problemStatementUrls || []) : [],
+            existingSolutionUrls: isEditMode ? (editingQuestion.solutionUrls || []) : [],
+        });
+        
+        // ✅ FIX: Define these in the component scope so they are available in the JSX below
+        const hasExistingProblemUrls = isEditMode && editingQuestion?.problemStatementUrls?.length > 0;
+        const hasExistingSolutionUrls = isEditMode && editingQuestion?.solutionUrls?.length > 0;
+
+        const [uploadProgress, setUploadProgress] = useState({ problem: 0, solution: 0, ocr: 0, overall: 0 });
+        const [isSubmitting, setIsSubmitting] = useState(false);
+        const [uploadError, setUploadError] = useState(null);
+        const [uploadSuccess, setUploadSuccess] = useState(false);
+        const [uploadStatus, setUploadStatus] = useState('');
+        const [latexPreview, setLatexPreview] = useState({
+            problem: '',
+            solution: '',
+            problemHtml: '',    
+            solutionHtml: '',  
+        });
+        const [showLatexPreview, setShowLatexPreview] = useState(false);
+        const [subtagInput, setSubtagInput] = useState('');
+        const [customTextbook, setCustomTextbook] = useState('');
+        const [customSelectionTest, setCustomSelectionTest] = useState('');
+        
+        const problemFileInputRef = useRef(null);
+        const solutionFileInputRef = useRef(null);
+        
+        const textbookOptions = [
+            "Halliday, Resnick, Walker - Fundamentals of Physics",
+            "Young & Freedman - University Physics",
+            "Feynman - The Feynman Lectures on Physics",
+            "Kleppner & Kolenkow - An Introduction to Mechanics",
+            "Morin - Introduction to Classical Mechanics",
+            "Purcell - Electricity and Magnetism",
+            "Griffiths - Introduction to Electrodynamics",
+            "Schroeder - An Introduction to Thermal Physics",
+            "Hecht - Optics",
+            "Pedrotti - Introduction to Optics",
+            "Fowles - Introduction to Modern Optics",
+            "Krane - Modern Physics",
+            "舒幼生、胡望雨、陈秉乾 - 物理学难题集萃",
+            "Others - Specify in problem source"
+        ];
+        
+        const selectionTestOptions = [
+            "Phase I - Test 1",
+            "Phase I - Test 2",
+            "Phase II - Test 1",
+            "Phase II - Test 2",
+            "Phase II - Test 3",
+            "Phase II - Test 4",
+            "Others - Specify in problem source"
+        ];
+        
+        const suggestedSubtags = [
+            "Newton's Laws", "Kinematics", "Dynamics", "Work & Energy", "Momentum", "Rotational Motion", "Simple Harmonic Motion", "Oscillations", "Waves", "Gravitation", "Fluid Mechanics",
+            "Electrostatics", "Electric Fields", "Magnetic Fields", "Electromagnetic Induction", "Circuit Analysis", "AC Circuits", "Maxwell's Equations", "Electromagnetic Waves",
+            "Kinetic Theory", "Thermodynamic Cycles", "Heat Transfer", "Thermal Expansion", "Entropy", "Statistical Mechanics", "Phase Transitions",
+            "Geometrical Optics", "Wave Optics", "Interference", "Diffraction", "Polarization", "Optical Instruments", "Photometry",
+            "Quantum Mechanics", "Atomic Physics", "Nuclear Physics", "Particle Physics", "Relativity", "Photoelectric Effect", "Matter Waves", "Radioactivity",
+            "Vectors", "Calculus", "Complex Numbers", "Numerical Methods", "Error Analysis"
+        ];
+        
+        if (!currentUser) {
+            return (
+                <div className="contribute-page">
+                    <div className="auth-required">
+                        <i className="fas fa-lock"></i>
+                        <h2>Authentication Required</h2>
+                        <p>Please log in to contribute problems to the database.</p>
+                        <button onClick={() => setCurrentPage('login')} className="hero-btn primary">Go to Login</button>
+                    </div>
+                </div>
+            );
+        }
+        
+        const handleFileUpload = (files, type) => {
+            const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+            const maxSize = 10 * 1024 * 1024;
+            const validFiles = Array.from(files).filter(file => {
+                if (!validTypes.includes(file.type)) { setUploadError(`Invalid file type: ${file.name}. Only images and PDFs are allowed.`); return false; }
+                if (file.size > maxSize) { setUploadError(`File too large: ${file.name}. Maximum size is 10MB.`); return false; }
+                return true;
+            });
+            if (validFiles.length === 0) return;
+            setFormData(prev => ({ ...prev, [`${type}Files`]: [...prev[`${type}Files`], ...validFiles] }));
+            setUploadError(null);
+        };
+        
+        const removeFile = (index, type) => {
+            setFormData(prev => ({ ...prev, [`${type}Files`]: prev[`${type}Files`].filter((_, i) => i !== index) }));
+        };
+        
+        const addSubtag = (subtag) => {
+            const trimmedSubtag = subtag.trim();
+            if (trimmedSubtag && !formData.subtags.includes(trimmedSubtag)) {
+                setFormData(prev => ({ ...prev, subtags: [...prev.subtags, trimmedSubtag] }));
+            }
+            setSubtagInput('');
+        };
+        
+        const removeSubtag = (subtagToRemove) => {
+            setFormData(prev => ({ ...prev, subtags: prev.subtags.filter(tag => tag !== subtagToRemove) }));
+        };
+        
+        const handleSubtagKeyDown = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addSubtag(subtagInput); }
+            else if (e.key === 'Backspace' && subtagInput === '' && formData.subtags.length > 0) {
+                setFormData(prev => ({ ...prev, subtags: prev.subtags.slice(0, -1) }));
+            }
+        };
+        
+        const handlePreviewLatex = async (type) => {
+            const files = type === 'problem' ? formData.problemFiles : formData.solutionFiles;
+            if (files.length === 0) { 
+                setUploadError(`No new ${type} files to preview. (Existing files cannot be previewed without re-uploading)`); 
+                return; 
+            }
+            setUploadStatus(`Processing ${type} files for preview...`);
+            setShowLatexPreview(true);
+            try {
+                const result = await convertToLatex(files[0]);
+                if (result.success) {
+                    setLatexPreview(prev => ({
+                        ...prev,
+                        [type]: result.latex,
+                        [`${type}Html`]: result.html || '',
+                    }));
+                    setUploadError(null);
+                } else {
+                    setUploadError(`Failed to convert ${type} file: ${result.error}`);
+                }
+            } catch (error) {
+                setUploadError(`Error processing ${type} file: ${error.message}`);
+            } finally {
+                setUploadStatus('');
+            }
+        };
+        
+        const handleAddCustomTextbook = () => {
+            const trimmed = customTextbook.trim();
+            if (trimmed && !textbookOptions.includes(trimmed)) {
+                textbookOptions.push(trimmed);
+                setFormData(prev => ({ ...prev, textbook: trimmed }));
+                setCustomTextbook('');
+            } else if (trimmed && textbookOptions.includes(trimmed)) {
+                setFormData(prev => ({ ...prev, textbook: trimmed }));
+                setCustomTextbook('');
+                setUploadError('This textbook already exists in the list. It has been selected for you.');
+                setTimeout(() => setUploadError(null), 3000);
+            }
+        };
+        
+        const handleAddCustomSelectionTest = () => {
+            const trimmed = customSelectionTest.trim();
+            if (trimmed && !selectionTestOptions.includes(trimmed)) {
+                selectionTestOptions.push(trimmed);
+                setFormData(prev => ({ ...prev, selectionTest: trimmed }));
+                setCustomSelectionTest('');
+            } else if (trimmed && selectionTestOptions.includes(trimmed)) {
+                setFormData(prev => ({ ...prev, selectionTest: trimmed }));
+                setCustomSelectionTest('');
+                setUploadError('This selection test already exists in the list. It has been selected for you.');
+                setTimeout(() => setUploadError(null), 3000);
+            }
+        };
+        
+        const handleSubmit = async (e) => {
+            e.preventDefault();
+            setIsSubmitting(true);
+            setUploadError(null);
+            setUploadSuccess(false);
+            setUploadStatus('Validating files...');
+            
+            // ✅ FIX: Use the variables defined in the component scope
+            if (!hasExistingProblemUrls && formData.problemFiles.length === 0) { 
+                setUploadError('Please upload at least one problem statement file.'); 
+                setIsSubmitting(false); 
+                return; 
+            }
+            if (!hasExistingSolutionUrls && formData.solutionFiles.length === 0) { 
+                setUploadError('Please upload at least one solution file.'); 
+                setIsSubmitting(false); 
+                return; 
+            }
+            if (!formData.problemSource.trim()) { 
+                setUploadError('Please enter the problem source (e.g., T3, IPhO 2023, Halliday Chapter 5).'); 
+                setIsSubmitting(false); 
+                return; 
+            }
+            
+            if (formData.sourceType === 'competition' && !formData.competition) {
+                setUploadError('Please select a competition.'); 
+                setIsSubmitting(false); 
+                return;
+            }
+            if (formData.sourceType === 'textbook' && !formData.textbook) {
+                setUploadError('Please select a textbook.'); 
+                setIsSubmitting(false); 
+                return;
+            }
+            if (formData.sourceType === 'selection_test' && !formData.selectionTest) {
+                setUploadError('Please select a selection test.'); 
+                setIsSubmitting(false); 
+                return;
+            }
+            
+            try {
+                const problemId = isEditMode ? editingQuestion.id : `problem_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                
+                let problemUrls = formData.existingProblemUrls || [];
+                let solutionUrls = formData.existingSolutionUrls || [];
+                let combinedProblemLatex = isEditMode ? editingQuestion.problemLatex : '';
+                let combinedSolutionLatex = isEditMode ? editingQuestion.solutionLatex : '';
+                let combinedProblemText = isEditMode ? editingQuestion.problemText : '';
+                let combinedSolutionText = isEditMode ? editingQuestion.solutionText : '';
+                let combinedProblemHtml = isEditMode ? (editingQuestion.problemHtml || '') : '';
+                let combinedSolutionHtml = isEditMode ? (editingQuestion.solutionHtml || '') : '';
+
+                let problemLatexResults = [];
+                let solutionLatexResults = [];
+
+                if (formData.problemFiles.length > 0) {
+                    setUploadStatus('Uploading new problem files to storage...');
+                    const newProblemUrls = await uploadProblemFiles(formData.problemFiles, problemId, 'problem', (progress) => { setUploadProgress(prev => ({ ...prev, problem: Math.round(progress) })); });
+                    problemUrls = [...problemUrls, ...newProblemUrls];
+                    
+                    setUploadStatus('Extracting LaTeX from new problem files with Mathpix...');
+                    problemLatexResults = await processFilesWithMathpix(formData.problemFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: Math.round(progress * 0.5) })); });
+                    
+                    const newProblemLatex = problemLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
+                    const newProblemText = problemLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
+                    const newProblemHtml = problemLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
+
+                    combinedProblemLatex = combinedProblemLatex ? combinedProblemLatex + '\n\n' + newProblemLatex : newProblemLatex;
+                    combinedProblemText = combinedProblemText ? combinedProblemText + '\n\n' + newProblemText : newProblemText;
+                    combinedProblemHtml = combinedProblemHtml ? combinedProblemHtml + '\n' + newProblemHtml : newProblemHtml;
+                }
+
+                if (formData.solutionFiles.length > 0) {
+                    setUploadStatus('Uploading new solution files to storage...');
+                    const newSolutionUrls = await uploadProblemFiles(formData.solutionFiles, problemId, 'solution', (progress) => { setUploadProgress(prev => ({ ...prev, solution: Math.round(progress) })); });
+                    solutionUrls = [...solutionUrls, ...newSolutionUrls];
+                    
+                    setUploadStatus('Extracting LaTeX from new solution files with Mathpix...');
+                    solutionLatexResults = await processFilesWithMathpix(formData.solutionFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: 50 + Math.round(progress * 0.5) })); });
+                    
+                    const newSolutionLatex = solutionLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
+                    const newSolutionText = solutionLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
+                    const newSolutionHtml = solutionLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
+
+                    combinedSolutionLatex = combinedSolutionLatex ? combinedSolutionLatex + '\n\n' + newSolutionLatex : newSolutionLatex;
+                    combinedSolutionText = combinedSolutionText ? combinedSolutionText + '\n\n' + newSolutionText : newSolutionText;
+                    combinedSolutionHtml = combinedSolutionHtml ? combinedSolutionHtml + '\n' + newSolutionHtml : newSolutionHtml;
+                }
+
+                if (formData.problemFiles.length > 0 || formData.solutionFiles.length > 0) {
+                    setUploadStatus('Migrating Mathpix cropped assets to permanent Firebase Storage...');
+                    
+                    if (formData.problemFiles.length > 0) {
+                        [combinedProblemLatex, combinedProblemText] = await extractAndUploadMathpixAssets([combinedProblemLatex, combinedProblemText], problemId, 'problem');
+                        [combinedProblemHtml] = await extractAndUploadMathpixAssets([combinedProblemHtml], problemId, 'problem');
+                    }
+                    if (formData.solutionFiles.length > 0) {
+                        [combinedSolutionLatex, combinedSolutionText] = await extractAndUploadMathpixAssets([combinedSolutionLatex, combinedSolutionText], problemId, 'solution');
+                        [combinedSolutionHtml] = await extractAndUploadMathpixAssets([combinedSolutionHtml], problemId, 'solution');
+                    }
+                }
+
+                setUploadStatus(isEditMode ? 'Updating problem in database...' : 'Saving to database...');
+
+                let source = '';
+                if (formData.sourceType === 'competition') source = formData.competition;
+                else if (formData.sourceType === 'textbook') source = formData.textbook;
+                else if (formData.sourceType === 'selection_test') source = formData.selectionTest;
+
+                const problemData = {
+                    title: formData.title,
+                    sourceType: formData.sourceType,
+                    competition: formData.sourceType === 'competition' ? formData.competition : null,
+                    textbook: formData.sourceType === 'textbook' ? formData.textbook : null,
+                    selectionTest: formData.sourceType === 'selection_test' ? formData.selectionTest : null,
+                    source: source,
+                    difficulty: formData.difficulty,
+                    topic: formData.topic,
+                    year: parseInt(formData.year) || null,
+                    problemSource: formData.problemSource,
+                    subtags: formData.subtags,
+                    problemStatementUrls: problemUrls,
+                    solutionUrls: solutionUrls,
+                    problemLatex: combinedProblemLatex || (isEditMode ? editingQuestion.problemLatex : 'No LaTeX extracted from problem files'),
+                    solutionLatex: combinedSolutionLatex || (isEditMode ? editingQuestion.solutionLatex : 'No LaTeX extracted from solution files'),
+                    problemText: combinedProblemText || (isEditMode ? editingQuestion.problemText : 'No text extracted from problem files'),
+                    solutionText: combinedSolutionText || (isEditMode ? editingQuestion.solutionText : 'No text extracted from solution files'),
+                    problemHtml: combinedProblemHtml || (isEditMode ? (editingQuestion.problemHtml || '') : ''),
+                    solutionHtml: combinedSolutionHtml || (isEditMode ? (editingQuestion.solutionHtml || '') : ''),
+                    userId: currentUser.uid,
+                    userEmail: currentUser.email,
+                    userDisplayName: currentUser.displayName || currentUser.email?.split('@')[0],
+                    status: isEditMode ? (editingQuestion.status || 'pending_review') : 'pending_review',
+                    fileCount: { problem: problemUrls.length, solution: solutionUrls.length },
+                    ocrConfidence: isEditMode && formData.problemFiles.length === 0 && formData.solutionFiles.length === 0 
+                        ? (editingQuestion.ocrConfidence || {})
+                        : {
+                            problem: formData.problemFiles.length > 0 
+                                ? problemLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(problemLatexResults.filter(r => r.success).length, 1)
+                                : (editingQuestion.ocrConfidence?.problem || 0),
+                            solution: formData.solutionFiles.length > 0
+                                ? solutionLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(solutionLatexResults.filter(r => r.success).length, 1)
+                                : (editingQuestion.ocrConfidence?.solution || 0),
+                        }
+                };
+
+                let result;
+                if (isEditMode) {
+                    result = await updateProblemInFirestore(problemId, problemData);
+                } else {
+                    result = await addProblemToFirestore(problemData);
+                }
+
+                if (result.success) {
+                    setUploadSuccess(true);
+                    setUploadStatus(isEditMode ? 'Problem updated successfully!' : 'Success!');
+                    setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
+                    
+                    const refreshResult = await fetchProblemsFromFirestore();
+                    if (refreshResult.success) {
+                        setQuestionsDB(refreshResult.problems);
+                    }
+
+                    setTimeout(() => {
+                        if (isEditMode) {
+                            setEditingQuestion(null);
+                            setCurrentPage('database');
+                        } else {
+                            setFormData({
+                                title: '', sourceType: 'competition', competition: '', textbook: '', selectionTest: '',
+                                difficulty: '', topic: '', year: '', problemSource: '', subtags: [],
+                                problemFiles: [], solutionFiles: [],
+                            });
+                            setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
+                            setUploadSuccess(false);
+                            setUploadStatus('');
+                            setShowLatexPreview(false);
+                            setLatexPreview({ problem: '', solution: '', problemHtml: '', solutionHtml: '' });
+                        }
+                    }, 3000);
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (error) {
+                console.error('Error submitting problem:', error);
+                setUploadError(`Failed to submit problem: ${error.message}`);
+            } finally {
+                setIsSubmitting(false);
+            }
+        };
+        
+        const handleChange = (e) => { 
+            setFormData({ ...formData, [e.target.name]: e.target.value });
+        };
+        
+        const formatFileSize = (bytes) => {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        };
+        
+        const getFileIcon = (file) => {
+            if (file.type === 'application/pdf') return 'fa-file-pdf';
+            if (file.type.startsWith('image/')) return 'fa-file-image';
+            return 'fa-file';
+        };
+        
         return (
             <div className="contribute-page">
-                <div className="auth-required">
-                    <i className="fas fa-lock"></i>
-                    <h2>Authentication Required</h2>
-                    <p>Please log in to contribute problems to the database.</p>
-                    <button onClick={() => setCurrentPage('login')} className="hero-btn primary">Go to Login</button>
+                <div className="contribute-header">
+                    <h1><i className={`fas ${isEditMode ? 'fa-edit' : 'fa-upload'}`}></i> {isEditMode ? 'Edit Problem' : 'Contribute a Problem'}</h1>
+                    <p>{isEditMode ? 'Update the problem details, source, and files. Leave files empty to keep existing ones.' : 'Upload problem statements and solutions as images or PDFs (PDFs are preferred for files with complex formatting and figures).'}</p>
+                    {currentUser && <div className="user-badge"><i className="fas fa-user-check"></i><span>Contributing as: {currentUser.displayName || currentUser.email}</span></div>}
                 </div>
-            </div>
-        );
-    }
-    
-    const handleFileUpload = (files, type) => {
-        const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
-        const maxSize = 10 * 1024 * 1024;
-        const validFiles = Array.from(files).filter(file => {
-            if (!validTypes.includes(file.type)) { setUploadError(`Invalid file type: ${file.name}. Only images and PDFs are allowed.`); return false; }
-            if (file.size > maxSize) { setUploadError(`File too large: ${file.name}. Maximum size is 10MB.`); return false; }
-            return true;
-        });
-        if (validFiles.length === 0) return;
-        setFormData(prev => ({ ...prev, [`${type}Files`]: [...prev[`${type}Files`], ...validFiles] }));
-        setUploadError(null);
-    };
-    
-    const removeFile = (index, type) => {
-        setFormData(prev => ({ ...prev, [`${type}Files`]: prev[`${type}Files`].filter((_, i) => i !== index) }));
-    };
-    
-    const addSubtag = (subtag) => {
-        const trimmedSubtag = subtag.trim();
-        if (trimmedSubtag && !formData.subtags.includes(trimmedSubtag)) {
-            setFormData(prev => ({ ...prev, subtags: [...prev.subtags, trimmedSubtag] }));
-        }
-        setSubtagInput('');
-    };
-    
-    const removeSubtag = (subtagToRemove) => {
-        setFormData(prev => ({ ...prev, subtags: prev.subtags.filter(tag => tag !== subtagToRemove) }));
-    };
-    
-    const handleSubtagKeyDown = (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); addSubtag(subtagInput); }
-        else if (e.key === 'Backspace' && subtagInput === '' && formData.subtags.length > 0) {
-            setFormData(prev => ({ ...prev, subtags: prev.subtags.slice(0, -1) }));
-        }
-    };
-    
-    const handlePreviewLatex = async (type) => {
-        const files = type === 'problem' ? formData.problemFiles : formData.solutionFiles;
-        if (files.length === 0) { setUploadError(`No ${type} files to preview`); return; }
-        setUploadStatus(`Processing ${type} files for preview...`);
-        setShowLatexPreview(true);
-        try {
-            const result = await convertToLatex(files[0]);
-            if (result.success) {
-            setLatexPreview(prev => ({
-                ...prev,
-                [type]: result.latex,
-                [`${type}Html`]: result.html || '',   // ← NEW
-            }));
-            setUploadError(null);
-            } else {
-            setUploadError(`Failed to convert ${type} file: ${result.error}`);
-            }
-        } catch (error) {
-            setUploadError(`Error processing ${type} file: ${error.message}`);
-        } finally {
-            setUploadStatus('');
-        }
-    };
-    
-    const handleAddCustomTextbook = () => {
-        const trimmed = customTextbook.trim();
-        if (trimmed && !textbookOptions.includes(trimmed)) {
-            textbookOptions.push(trimmed);
-            setFormData(prev => ({ ...prev, textbook: trimmed }));
-            setCustomTextbook('');
-        } else if (trimmed && textbookOptions.includes(trimmed)) {
-            setFormData(prev => ({ ...prev, textbook: trimmed }));
-            setCustomTextbook('');
-            setUploadError('This textbook already exists in the list. It has been selected for you.');
-            setTimeout(() => setUploadError(null), 3000);
-        }
-    };
-    
-    const handleAddCustomSelectionTest = () => {
-        const trimmed = customSelectionTest.trim();
-        if (trimmed && !selectionTestOptions.includes(trimmed)) {
-            selectionTestOptions.push(trimmed);
-            setFormData(prev => ({ ...prev, selectionTest: trimmed }));
-            setCustomSelectionTest('');
-        } else if (trimmed && selectionTestOptions.includes(trimmed)) {
-            setFormData(prev => ({ ...prev, selectionTest: trimmed }));
-            setCustomSelectionTest('');
-            setUploadError('This selection test already exists in the list. It has been selected for you.');
-            setTimeout(() => setUploadError(null), 3000);
-        }
-    };
-    
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setIsSubmitting(true);
-        setUploadError(null);
-        setUploadSuccess(false);
-        setUploadStatus('Validating files...');
-        
-        if (formData.problemFiles.length === 0) { setUploadError('Please upload at least one problem statement file.'); setIsSubmitting(false); return; }
-        if (formData.solutionFiles.length === 0) { setUploadError('Please upload at least one solution file.'); setIsSubmitting(false); return; }
-        if (!formData.problemSource.trim()) { setUploadError('Please enter the problem source (e.g., T3, IPhO 2023, Halliday Chapter 5).'); setIsSubmitting(false); return; }
-        
-        // Validate source selection
-        if (formData.sourceType === 'competition' && !formData.competition) {
-            setUploadError('Please select a competition.'); 
-            setIsSubmitting(false); 
-            return;
-        }
-        if (formData.sourceType === 'textbook' && !formData.textbook) {
-            setUploadError('Please select a textbook.'); 
-            setIsSubmitting(false); 
-            return;
-        }
-        if (formData.sourceType === 'selection_test' && !formData.selectionTest) {
-            setUploadError('Please select a selection test.'); 
-            setIsSubmitting(false); 
-            return;
-        }
-        
-        try {
-            const problemId = `problem_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-            setUploadStatus('Uploading problem files to storage...');
-            const problemUrls = await uploadProblemFiles(formData.problemFiles, problemId, 'problem', (progress) => { setUploadProgress(prev => ({ ...prev, problem: Math.round(progress) })); });
-            
-            setUploadStatus('Uploading solution files to storage...');
-            const solutionUrls = await uploadProblemFiles(formData.solutionFiles, problemId, 'solution', (progress) => { setUploadProgress(prev => ({ ...prev, solution: Math.round(progress) })); });
-            
-            setUploadStatus('Extracting LaTeX from problem files with Mathpix...');
-            const problemLatexResults = await processFilesWithMathpix(formData.problemFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: Math.round(progress * 0.5) })); });
-            
-            setUploadStatus('Extracting LaTeX from solution files with Mathpix...');
-            const solutionLatexResults = await processFilesWithMathpix(formData.solutionFiles, (progress) => { setUploadProgress(prev => ({ ...prev, ocr: 50 + Math.round(progress * 0.5) })); });
-            
-            let combinedProblemLatex = problemLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
-            let combinedSolutionLatex = solutionLatexResults.filter(r => r.success).map(r => r.latex || '').join('\n\n');
-            let combinedProblemText = problemLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
-            let combinedSolutionText = solutionLatexResults.filter(r => r.success).map(r => r.text || '').join('\n\n');
-            
-            // ── Combine HTML ──
-            let combinedProblemHtml = problemLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
-            let combinedSolutionHtml = solutionLatexResults.filter(r => r.success).map(r => r.html || '').join('\n');
-
-            const failedProblemFiles = problemLatexResults.filter(r => !r.success);
-            const failedSolutionFiles = solutionLatexResults.filter(r => !r.success);
-            if (failedProblemFiles.length > 0) console.warn('Some problem files failed to convert:', failedProblemFiles);
-            if (failedSolutionFiles.length > 0) console.warn('Some solution files failed to convert:', failedSolutionFiles);
-
-            setUploadStatus('Migrating Mathpix cropped assets to permanent Firebase Storage...');
-            console.log('[Asset Migration] Starting migration process...');
-
-            // Migrate assets in MMD/text
-            [combinedProblemLatex, combinedProblemText] = await extractAndUploadMathpixAssets(
-            [combinedProblemLatex, combinedProblemText],
-            problemId,
-            'problem'
-            );
-            [combinedSolutionLatex, combinedSolutionText] = await extractAndUploadMathpixAssets(
-            [combinedSolutionLatex, combinedSolutionText],
-            problemId,
-            'solution'
-            );
-
-            // ── NEW: migrate assets in HTML too ──
-            [combinedProblemHtml] = await extractAndUploadMathpixAssets(
-            [combinedProblemHtml], problemId, 'problem'
-            );
-            [combinedSolutionHtml] = await extractAndUploadMathpixAssets(
-            [combinedSolutionHtml], problemId, 'solution'
-            );
-
-            setUploadStatus('Saving to database...');
-
-            // Determine the source field
-            let source = '';
-            if (formData.sourceType === 'competition') source = formData.competition;
-            else if (formData.sourceType === 'textbook') source = formData.textbook;
-            else if (formData.sourceType === 'selection_test') source = formData.selectionTest;
-
-            const problemData = {
-            title: formData.title,
-            sourceType: formData.sourceType,
-            competition: formData.sourceType === 'competition' ? formData.competition : null,
-            textbook: formData.sourceType === 'textbook' ? formData.textbook : null,
-            selectionTest: formData.sourceType === 'selection_test' ? formData.selectionTest : null,
-            source: source,
-            difficulty: formData.difficulty,
-            topic: formData.topic,
-            year: parseInt(formData.year) || null,
-            problemSource: formData.problemSource,
-            subtags: formData.subtags,
-            problemStatementUrls: problemUrls,
-            solutionUrls: solutionUrls,
-            problemLatex: combinedProblemLatex || 'No LaTeX extracted from problem files',
-            solutionLatex: combinedSolutionLatex || 'No LaTeX extracted from solution files',
-            problemText: combinedProblemText || 'No text extracted from problem files',
-            solutionText: combinedSolutionText || 'No text extracted from solution files',
-            problemHtml: combinedProblemHtml || '',     // ← NEW
-            solutionHtml: combinedSolutionHtml || '',   // ← NEW
-            userId: currentUser.uid,
-            userEmail: currentUser.email,
-            userDisplayName: currentUser.displayName || currentUser.email?.split('@')[0],
-            status: 'pending_review',
-            fileCount: { problem: problemUrls.length, solution: solutionUrls.length },
-            ocrConfidence: {
-                problem: problemLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(problemLatexResults.filter(r => r.success).length, 1),
-                solution: solutionLatexResults.filter(r => r.success).reduce((acc, r) => acc + (r.confidence || 0), 0) / Math.max(solutionLatexResults.filter(r => r.success).length, 1),
-            },
-            };
-
-            const result = await addProblemToFirestore(problemData);
-
-            if (result.success) {
-            setUploadSuccess(true);
-            setUploadStatus(result.htmlDropped
-                ? 'Success! (Document was too large for inline HTML — saved as Mathpix Markdown instead.)'
-                : 'Success!'
-            );
-            setUploadProgress({ problem: 100, solution: 100, ocr: 100, overall: 100 });
-            setLatexPreview({
-                problem: combinedProblemLatex,
-                solution: combinedSolutionLatex,
-                problemHtml: result.htmlDropped ? '' : combinedProblemHtml,   // ← reflect what was actually saved
-                solutionHtml: result.htmlDropped ? '' : combinedSolutionHtml,
-            });
-            setShowLatexPreview(true);
-
-            const refreshResult = await fetchProblemsFromFirestore();
-            if (refreshResult.success) {
-                setQuestionsDB(refreshResult.problems);
-            }
-
-            setTimeout(() => {
-                setFormData({
-                title: '', sourceType: 'competition', competition: '', textbook: '', selectionTest: '',
-                difficulty: '', topic: '', year: '', problemSource: '', subtags: [],
-                problemFiles: [], solutionFiles: [],
-                });
-                setUploadProgress({ problem: 0, solution: 0, ocr: 0, overall: 0 });
-                setUploadSuccess(false);
-                setUploadStatus('');
-                setShowLatexPreview(false);
-                setLatexPreview({ problem: '', solution: '', problemHtml: '', solutionHtml: '' });
-            }, 5000);
-            } else {
-            throw new Error(result.error);
-            }
-        } catch (error) {
-            console.error('Error submitting problem:', error);
-            setUploadError(`Failed to submit problem: ${error.message}`);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-    
-    const handleChange = (e) => { 
-        setFormData({ ...formData, [e.target.name]: e.target.value });
-    };
-    
-    const formatFileSize = (bytes) => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
-    const getFileIcon = (file) => {
-        if (file.type === 'application/pdf') return 'fa-file-pdf';
-        if (file.type.startsWith('image/')) return 'fa-file-image';
-        return 'fa-file';
-    };
-    
-    return (
-        <div className="contribute-page">
-            <div className="contribute-header">
-                <h1><i className="fas fa-upload"></i> Contribute a Problem</h1>
-                <p>Upload problem statements and solutions as images or PDFs (PDFs are preferred for files with complex formatting and figures).</p>
-                {currentUser && <div className="user-badge"><i className="fas fa-user-check"></i><span>Contributing as: {currentUser.displayName || currentUser.email}</span></div>}
-            </div>
-            {uploadError && <div className="error-message" style={{ marginBottom: '20px' }}><i className="fas fa-exclamation-circle"></i> {uploadError}</div>}
-            {uploadSuccess && <div className="success-message" style={{ marginBottom: '20px' }}><i className="fas fa-check-circle"></i> Problem submitted successfully! LaTeX extracted from {formData.problemFiles.length + formData.solutionFiles.length} files.</div>}
-            {uploadStatus && !uploadSuccess && !uploadError && (
-                <div className="status-message" style={{ marginBottom: '20px', padding: '12px', background: '#e0f2fe', borderRadius: '8px', color: '#0369a1' }}>
-                    <i className="fas fa-spinner fa-spin"></i> {uploadStatus}
-                </div>
-            )}
-            {showLatexPreview && (
-                <div className="latex-preview-modal">
-                    <div className="latex-preview-content">
-                        <div className="latex-preview-header">
-                            <h3><i className="fas fa-eye"></i> Mathpix Markdown Preview</h3>
-                            <button className="modal-close" onClick={() => setShowLatexPreview(false)}>×</button>
-                        </div>
-                        <div className="latex-preview-body">
-                            {latexPreview.problem && (
-                                <div className="latex-section">
-                                    <h4>Problem Statement Preview</h4>
-                                    <div className="preview-box">
-                                        <MathpixContent
-                                            content={latexPreview.problem}
-                                            html={latexPreview.problemHtml}
-                                        />
+                
+                {uploadError && <div className="error-message" style={{ marginBottom: '20px' }}><i className="fas fa-exclamation-circle"></i> {uploadError}</div>}
+                {uploadSuccess && <div className="success-message" style={{ marginBottom: '20px' }}><i className="fas fa-check-circle"></i> {isEditMode ? 'Problem updated successfully!' : `Problem submitted successfully! LaTeX extracted from ${formData.problemFiles.length + formData.solutionFiles.length} files.`}</div>}
+                {uploadStatus && !uploadSuccess && !uploadError && (
+                    <div className="status-message" style={{ marginBottom: '20px', padding: '12px', background: '#e0f2fe', borderRadius: '8px', color: '#0369a1' }}>
+                        <i className="fas fa-spinner fa-spin"></i> {uploadStatus}
+                    </div>
+                )}
+                
+                {showLatexPreview && (
+                    <div className="latex-preview-modal">
+                        <div className="latex-preview-content">
+                            <div className="latex-preview-header">
+                                <h3><i className="fas fa-eye"></i> Mathpix Markdown Preview</h3>
+                                <button className="modal-close" onClick={() => setShowLatexPreview(false)}>×</button>
+                            </div>
+                            <div className="latex-preview-body">
+                                {latexPreview.problem && (
+                                    <div className="latex-section">
+                                        <h4>Problem Statement Preview</h4>
+                                        <div className="preview-box">
+                                            <MathpixContent content={latexPreview.problem} html={latexPreview.problemHtml} />
+                                        </div>
+                                        <h4>Raw LaTeX/Markdown (.mmd)</h4>
+                                        <pre className="latex-code">{latexPreview.problem}</pre>
                                     </div>
-                                    <h4>Raw LaTeX/Markdown (.mmd)</h4>
-                                    <pre className="latex-code">{latexPreview.problem}</pre>
-                                </div>
-                            )}
-                            {latexPreview.solution && (
-                                <div className="latex-section">
-                                    <h4>Solution Preview</h4>
-                                    <div className="preview-box">
-                                        <MathpixContent
-                                            content={latexPreview.solution}
-                                            html={latexPreview.solutionHtml}
-                                        />
+                                )}
+                                {latexPreview.solution && (
+                                    <div className="latex-section">
+                                        <h4>Solution Preview</h4>
+                                        <div className="preview-box">
+                                            <MathpixContent content={latexPreview.solution} html={latexPreview.solutionHtml} />
+                                        </div>
+                                        <h4>Raw LaTeX/Markdown (.mmd)</h4>
+                                        <pre className="latex-code">{latexPreview.solution}</pre>
                                     </div>
-                                    <h4>Raw LaTeX/Markdown (.mmd)</h4>
-                                    <pre className="latex-code">{latexPreview.solution}</pre>
-                                </div>
-                            )}
-                        </div>
-                        <div className="latex-preview-footer">
-                            <button className="close-modal-btn" onClick={() => setShowLatexPreview(false)}>Close Preview</button>
+                                )}
+                            </div>
+                            <div className="latex-preview-footer">
+                                <button className="close-modal-btn" onClick={() => setShowLatexPreview(false)}>Close Preview</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-            <form className="contribute-form" onSubmit={handleSubmit}>
-                <div className="form-grid">
-                    <div className="form-group full-width">
-                        <label>Problem Title *</label>
-                        <input type="text" name="title" value={formData.title} onChange={handleChange} placeholder="e.g., Projectile Motion on an Incline" required disabled={isSubmitting} />
-                    </div>
-                    <div className="form-group full-width">
-                        <label>Problem Source *</label>
-                        <input type="text" name="problemSource" value={formData.problemSource} onChange={handleChange} placeholder="e.g., T3, IPhO 2023, Halliday Chapter 5" required disabled={isSubmitting} />
-                        <small className="field-hint">Specify the source identifier (problem number, chapter, section, etc.)</small>
-                    </div>
-                    
-                    {/* Source Type Selection - Now with 3 options */}
-                    <div className="form-group full-width">
-                        <label>Source Type *</label>
-                        <div className="source-type-selector">
-                            <button 
-                                type="button"
-                                className={`source-type-btn ${formData.sourceType === 'competition' ? 'active' : ''}`}
-                                onClick={() => setFormData(prev => ({ 
-                                    ...prev, 
-                                    sourceType: 'competition', 
-                                    competition: '', 
-                                    textbook: '',
-                                    selectionTest: ''
-                                }))}
-                                disabled={isSubmitting}
-                            >
-                                <i className="fas fa-trophy"></i>
-                                Competition
-                            </button>
-                            <button 
-                                type="button"
-                                className={`source-type-btn ${formData.sourceType === 'textbook' ? 'active' : ''}`}
-                                onClick={() => setFormData(prev => ({ 
-                                    ...prev, 
-                                    sourceType: 'textbook', 
-                                    competition: '', 
-                                    textbook: '',
-                                    selectionTest: ''
-                                }))}
-                                disabled={isSubmitting}
-                            >
-                                <i className="fas fa-book"></i>
-                                Textbook
-                            </button>
-                            <button 
-                                type="button"
-                                className={`source-type-btn ${formData.sourceType === 'selection_test' ? 'active' : ''}`}
-                                onClick={() => setFormData(prev => ({ 
-                                    ...prev, 
-                                    sourceType: 'selection_test', 
-                                    competition: '', 
-                                    textbook: '',
-                                    selectionTest: ''
-                                }))}
-                                disabled={isSubmitting}
-                            >
-                                <i className="fas fa-clipboard-list"></i>
-                                Selection Test
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Competition Selection */}
-                    {formData.sourceType === 'competition' && (
+                )}
+                
+                <form className="contribute-form" onSubmit={handleSubmit}>
+                    <div className="form-grid">
                         <div className="form-group full-width">
-                            <label>Competition *</label>
-                            <select 
-                                name="competition" 
-                                value={formData.competition} 
-                                onChange={handleChange} 
-                                required 
-                                disabled={isSubmitting}
-                            >
-                                <option value="">Select competition</option>
-                                <option value="IPhO">IPhO (International Physics Olympiad)</option>
-                                <option value="APhO">APhO (Asian Physics Olympiad)</option>
-                                <option value="PanPhO">PanPhO (Pan-Pearl River Delta and Chinese Elite Schools Physics Olympiad)</option>
-                                <option value="HKPhO">HKPhO (Hong Kong Physics Olympiad)</option>
+                            <label>Problem Title *</label>
+                            <input type="text" name="title" value={formData.title} onChange={handleChange} placeholder="e.g., Projectile Motion on an Incline" required disabled={isSubmitting} />
+                        </div>
+                        <div className="form-group full-width">
+                            <label>Problem Source *</label>
+                            <input type="text" name="problemSource" value={formData.problemSource} onChange={handleChange} placeholder="e.g., T3, IPhO 2023, Halliday Chapter 5" required disabled={isSubmitting} />
+                            <small className="field-hint">Specify the source identifier (problem number, chapter, section, etc.)</small>
+                        </div>
+                        
+                        <div className="form-group full-width">
+                            <label>Source Type *</label>
+                            <div className="source-type-selector">
+                                <button type="button" className={`source-type-btn ${formData.sourceType === 'competition' ? 'active' : ''}`} onClick={() => setFormData(prev => ({ ...prev, sourceType: 'competition', competition: '', textbook: '', selectionTest: '' }))} disabled={isSubmitting}>
+                                    <i className="fas fa-trophy"></i> Competition
+                                </button>
+                                <button type="button" className={`source-type-btn ${formData.sourceType === 'textbook' ? 'active' : ''}`} onClick={() => setFormData(prev => ({ ...prev, sourceType: 'textbook', competition: '', textbook: '', selectionTest: '' }))} disabled={isSubmitting}>
+                                    <i className="fas fa-book"></i> Textbook
+                                </button>
+                                <button type="button" className={`source-type-btn ${formData.sourceType === 'selection_test' ? 'active' : ''}`} onClick={() => setFormData(prev => ({ ...prev, sourceType: 'selection_test', competition: '', textbook: '', selectionTest: '' }))} disabled={isSubmitting}>
+                                    <i className="fas fa-clipboard-list"></i> Selection Test
+                                </button>
+                            </div>
+                        </div>
+
+                        {formData.sourceType === 'competition' && (
+                            <div className="form-group full-width">
+                                <label>Competition *</label>
+                                <select name="competition" value={formData.competition} onChange={handleChange} required disabled={isSubmitting}>
+                                    <option value="">Select competition</option>
+                                    <option value="IPhO">IPhO (International Physics Olympiad)</option>
+                                    <option value="APhO">APhO (Asian Physics Olympiad)</option>
+                                    <option value="PanPhO">PanPhO (Pan-Pearl River Delta and Chinese Elite Schools Physics Olympiad)</option>
+                                    <option value="HKPhO">HKPhO (Hong Kong Physics Olympiad)</option>
+                                    <option value="Others">Others</option>
+                                </select>
+                            </div>
+                        )}
+
+                        {formData.sourceType === 'textbook' && (
+                            <div className="form-group full-width">
+                                <label>Textbook *</label>
+                                <select name="textbook" value={formData.textbook} onChange={handleChange} required disabled={isSubmitting}>
+                                    <option value="">Select a textbook</option>
+                                    {textbookOptions.map((book) => (<option key={book} value={book}>{book}</option>))}
+                                </select>
+                                <div className="custom-source-container">
+                                    <div className="custom-source-input-wrapper">
+                                        <input type="text" value={customTextbook} onChange={(e) => setCustomTextbook(e.target.value)} placeholder="Or add a new textbook..." disabled={isSubmitting} className="custom-source-input" />
+                                        <button type="button" onClick={handleAddCustomTextbook} disabled={isSubmitting || !customTextbook.trim()} className="add-source-btn"><i className="fas fa-plus"></i> Add</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {formData.sourceType === 'selection_test' && (
+                            <div className="form-group full-width">
+                                <label>Selection Test *</label>
+                                <select name="selectionTest" value={formData.selectionTest} onChange={handleChange} required disabled={isSubmitting}>
+                                    <option value="">Select a selection test</option>
+                                    {selectionTestOptions.map((test) => (<option key={test} value={test}>{test}</option>))}
+                                </select>
+                                <div className="custom-source-container">
+                                    <div className="custom-source-input-wrapper">
+                                        <input type="text" value={customSelectionTest} onChange={(e) => setCustomSelectionTest(e.target.value)} placeholder="Or add a new selection test..." disabled={isSubmitting} className="custom-source-input" />
+                                        <button type="button" onClick={handleAddCustomSelectionTest} disabled={isSubmitting || !customSelectionTest.trim()} className="add-source-btn"><i className="fas fa-plus"></i> Add</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="form-group">
+                            <label>Difficulty *</label>
+                            <select name="difficulty" value={formData.difficulty} onChange={handleChange} required disabled={isSubmitting}>
+                                <option value="">Select difficulty</option>
+                                <option value="Easy">Easy</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Hard">Hard</option>
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label>Topic *</label>
+                            <select name="topic" value={formData.topic} onChange={handleChange} required disabled={isSubmitting}>
+                                <option value="">Select topic</option>
+                                <option value="Mechanics">Mechanics</option>
+                                <option value="Thermodynamics">Thermodynamics</option>
+                                <option value="Electromagnetism">Electromagnetism</option>
+                                <option value="Optics">Optics</option>
+                                <option value="Modern Physics">Modern Physics</option>
                                 <option value="Others">Others</option>
                             </select>
-                            <small className="field-hint">Select the competition this problem is from</small>
                         </div>
-                    )}
-
-                    {/* Textbook Selection */}
-                    {formData.sourceType === 'textbook' && (
+                        <div className="form-group">
+                            <label>Year</label>
+                            <input type="number" name="year" value={formData.year} onChange={handleChange} placeholder="e.g., 2023" min="1900" max="2030" disabled={isSubmitting} />
+                        </div>
                         <div className="form-group full-width">
-                            <label>Textbook *</label>
-                            <select 
-                                name="textbook" 
-                                value={formData.textbook} 
-                                onChange={handleChange} 
-                                required 
-                                disabled={isSubmitting}
-                            >
-                                <option value="">Select a textbook</option>
-                                {textbookOptions.map((book) => (
-                                    <option key={book} value={book}>{book}</option>
-                                ))}
-                            </select>
-                            <small className="field-hint">Select the textbook this problem is from</small>
-                            
-                            {/* Custom textbook option */}
-                            <div className="custom-source-container">
-                                <div className="custom-source-input-wrapper">
-                                    <input 
-                                        type="text"
-                                        value={customTextbook}
-                                        onChange={(e) => setCustomTextbook(e.target.value)}
-                                        placeholder="Or add a new textbook..."
-                                        disabled={isSubmitting}
-                                        className="custom-source-input"
-                                    />
-                                    <button 
-                                        type="button"
-                                        onClick={handleAddCustomTextbook}
-                                        disabled={isSubmitting || !customTextbook.trim()}
-                                        className="add-source-btn"
-                                    >
-                                        <i className="fas fa-plus"></i> Add
-                                    </button>
+                            <label>Subtags</label>
+                            <div className="subtags-container">
+                                <div className="subtag-input-wrapper">
+                                    <div className="subtags-list">
+                                        {formData.subtags.map((tag) => (
+                                            <span key={tag} className="subtag-tag">{tag}<button type="button" className="subtag-remove" onClick={() => removeSubtag(tag)} disabled={isSubmitting}>×</button></span>
+                                        ))}
+                                        <input type="text" value={subtagInput} onChange={(e) => setSubtagInput(e.target.value)} onKeyDown={handleSubtagKeyDown} placeholder={formData.subtags.length === 0 ? "Type a subtag and press Enter" : "Add another subtag..."} className="subtag-input" disabled={isSubmitting} style={{ flex: 1, minWidth: '150px', border: 'none', outline: 'none', padding: '8px', fontSize: '14px' }} />
+                                    </div>
                                 </div>
-                                <small className="field-hint">Don't see your textbook? Type it above and click "Add"</small>
+                                {formData.subtags.length < 10 && (
+                                    <div className="suggested-subtags">
+                                        <small>Suggested subtags:</small>
+                                        <div className="suggested-tags-list">
+                                            {suggestedSubtags.filter(tag => !formData.subtags.includes(tag)).slice(0, 12).map((tag) => (
+                                                <button key={tag} type="button" className="suggested-tag-btn" onClick={() => addSubtag(tag)} disabled={isSubmitting}>{tag}</button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
-                    )}
-
-                    {/* Selection Test Selection */}
-                    {formData.sourceType === 'selection_test' && (
+                        
                         <div className="form-group full-width">
-                            <label>Selection Test *</label>
-                            <select 
-                                name="selectionTest" 
-                                value={formData.selectionTest} 
-                                onChange={handleChange} 
-                                required 
-                                disabled={isSubmitting}
-                            >
-                                <option value="">Select a selection test</option>
-                                {selectionTestOptions.map((test) => (
-                                    <option key={test} value={test}>{test}</option>
-                                ))}
-                            </select>
-                            <small className="field-hint">Select the selection test this problem is from</small>
-                            
-                            {/* Custom selection test option */}
-                            <div className="custom-source-container">
-                                <div className="custom-source-input-wrapper">
-                                    <input 
-                                        type="text"
-                                        value={customSelectionTest}
-                                        onChange={(e) => setCustomSelectionTest(e.target.value)}
-                                        placeholder="Or add a new selection test..."
-                                        disabled={isSubmitting}
-                                        className="custom-source-input"
-                                    />
-                                    <button 
-                                        type="button"
-                                        onClick={handleAddCustomSelectionTest}
-                                        disabled={isSubmitting || !customSelectionTest.trim()}
-                                        className="add-source-btn"
-                                    >
-                                        <i className="fas fa-plus"></i> Add
-                                    </button>
+                            <label>Problem Statement Files {isEditMode ? '(Optional)' : '*'}</label>
+                            <div className="file-upload-area">
+                                <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
+                                    <i className="fas fa-cloud-upload-alt"></i>
+                                    <p>Drag & drop files here or click to browse</p>
+                                    <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
+                                    <input type="file" ref={problemFileInputRef} onChange={(e) => handleFileUpload(e.target.files, 'problem')} accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf" multiple className="file-input-hidden" onClick={(e) => e.target.value = null} disabled={isSubmitting} />
+                                    <button type="button" className="file-select-btn" onClick={() => problemFileInputRef.current?.click()} disabled={isSubmitting}><i className="fas fa-folder-open"></i> Browse Files</button>
                                 </div>
-                                <small className="field-hint">Don't see your selection test? Type it above and click "Add"</small>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="form-group">
-                        <label>Difficulty *</label>
-                        <select name="difficulty" value={formData.difficulty} onChange={handleChange} required disabled={isSubmitting}>
-                            <option value="">Select difficulty</option>
-                            <option value="Easy">Easy</option>
-                            <option value="Medium">Medium</option>
-                            <option value="Hard">Hard</option>
-                        </select>
-                    </div>
-                    <div className="form-group">
-                        <label>Topic *</label>
-                        <select name="topic" value={formData.topic} onChange={handleChange} required disabled={isSubmitting}>
-                            <option value="">Select topic</option>
-                            <option value="Mechanics">Mechanics</option>
-                            <option value="Thermodynamics">Thermodynamics</option>
-                            <option value="Electromagnetism">Electromagnetism</option>
-                            <option value="Optics">Optics</option>
-                            <option value="Modern Physics">Modern Physics</option>
-                            <option value="Others">Others</option>
-                        </select>
-                    </div>
-                    <div className="form-group">
-                        <label>Year</label>
-                        <input type="number" name="year" value={formData.year} onChange={handleChange} placeholder="e.g., 2023" min="1900" max="2030" disabled={isSubmitting} />
-                    </div>
-                    <div className="form-group full-width">
-                        <label>Subtags</label>
-                        <div className="subtags-container">
-                            <div className="subtag-input-wrapper">
-                                <div className="subtags-list">
-                                    {formData.subtags.map((tag) => (
-                                        <span key={tag} className="subtag-tag">{tag}<button type="button" className="subtag-remove" onClick={() => removeSubtag(tag)} disabled={isSubmitting}>×</button></span>
-                                    ))}
-                                    <input type="text" value={subtagInput} onChange={(e) => setSubtagInput(e.target.value)} onKeyDown={handleSubtagKeyDown} placeholder={formData.subtags.length === 0 ? "Type a subtag and press Enter" : "Add another subtag..."} className="subtag-input" disabled={isSubmitting} style={{ flex: 1, minWidth: '150px', border: 'none', outline: 'none', padding: '8px', fontSize: '14px' }} />
-                                </div>
-                            </div>
-                            {formData.subtags.length < 10 && (
-                                <div className="suggested-subtags">
-                                    <small>Suggested subtags:</small>
-                                    <div className="suggested-tags-list">
-                                        {suggestedSubtags.filter(tag => !formData.subtags.includes(tag)).slice(0, 12).map((tag) => (
-                                            <button key={tag} type="button" className="suggested-tag-btn" onClick={() => addSubtag(tag)} disabled={isSubmitting}>{tag}</button>
+                                {uploadProgress.problem > 0 && uploadProgress.problem < 100 && (
+                                    <div className="upload-progress">
+                                        <div className="progress-bar"><div className="progress-fill" style={{ width: `${uploadProgress.problem}%` }}></div></div>
+                                        <span className="progress-text">{uploadProgress.problem}%</span>
+                                    </div>
+                                )}
+                                {formData.problemFiles.length > 0 && (
+                                    <div className="file-list">
+                                        <div className="file-list-header">
+                                            <h4>New Uploaded Files ({formData.problemFiles.length})</h4>
+                                            <button type="button" className="preview-latex-btn" onClick={() => handlePreviewLatex('problem')} disabled={isSubmitting}><i className="fas fa-eye"></i> Preview LaTeX</button>
+                                        </div>
+                                        {formData.problemFiles.map((file, index) => (
+                                            <div key={index} className="file-item">
+                                                <i className={`fas ${getFileIcon(file)}`}></i>
+                                                <div className="file-info">
+                                                    <span className="file-name">{file.name}</span>
+                                                    <span className="file-size">{formatFileSize(file.size)}</span>
+                                                </div>
+                                                <button type="button" className="file-remove" onClick={() => removeFile(index, 'problem')} disabled={isSubmitting}><i className="fas fa-times"></i></button>
+                                            </div>
                                         ))}
                                     </div>
-                                </div>
-                            )}
-                        </div>
-                        <small className="field-hint">Add relevant subtags (e.g., Newton's Laws, Simple Harmonic Motion). Press Enter to add.</small>
-                    </div>
-                    <div className="form-group full-width">
-                        <label>Problem Statement Files *</label>
-                        <div className="file-upload-area">
-                            <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
-                                <i className="fas fa-cloud-upload-alt"></i>
-                                <p>Drag & drop files here or click to browse</p>
-                                <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
-                                <input type="file" ref={problemFileInputRef} onChange={(e) => handleFileUpload(e.target.files, 'problem')} accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf" multiple className="file-input-hidden" onClick={(e) => e.target.value = null} disabled={isSubmitting} />
-                                <button type="button" className="file-select-btn" onClick={() => problemFileInputRef.current?.click()} disabled={isSubmitting}><i className="fas fa-folder-open"></i> Browse Files</button>
-                            </div>
-                            {uploadProgress.problem > 0 && uploadProgress.problem < 100 && (
-                                <div className="upload-progress">
-                                    <div className="progress-bar"><div className="progress-fill" style={{ width: `${uploadProgress.problem}%` }}></div></div>
-                                    <span className="progress-text">{uploadProgress.problem}%</span>
-                                </div>
-                            )}
-                            {formData.problemFiles.length > 0 && (
-                                <div className="file-list">
-                                    <div className="file-list-header">
-                                        <h4>Uploaded Files ({formData.problemFiles.length})</h4>
-                                        <button type="button" className="preview-latex-btn" onClick={() => handlePreviewLatex('problem')} disabled={isSubmitting}><i className="fas fa-eye"></i> Preview LaTeX</button>
+                                )}
+                                {/* ✅ FIX: Safe references to existing URLs and problemStatementUrls */}
+                                {isEditMode && hasExistingProblemUrls && formData.problemFiles.length === 0 && (
+                                    <div className="existing-files-notice" style={{ marginTop: '10px', padding: '10px', background: '#f0fdf4', borderRadius: '6px', color: '#166534', fontSize: '0.9rem' }}>
+                                        <i className="fas fa-check-circle"></i> Keeping existing {editingQuestion?.problemStatementUrls?.length || 0} problem file(s). Upload new files to add or replace.
                                     </div>
-                                    {formData.problemFiles.map((file, index) => (
-                                        <div key={index} className="file-item">
-                                            <i className={`fas ${getFileIcon(file)}`}></i>
-                                            <div className="file-info">
-                                                <span className="file-name">{file.name}</span>
-                                                <span className="file-size">{formatFileSize(file.size)}</span>
-                                            </div>
-                                            <button type="button" className="file-remove" onClick={() => removeFile(index, 'problem')} disabled={isSubmitting}><i className="fas fa-times"></i></button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                    <div className="form-group full-width">
-                        <label>Solution Files *</label>
-                        <div className="file-upload-area">
-                            <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
-                                <i className="fas fa-cloud-upload-alt"></i>
-                                <p>Drag & drop solution files here or click to browse</p>
-                                <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
-                                <input type="file" ref={solutionFileInputRef} onChange={(e) => handleFileUpload(e.target.files, 'solution')} accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf" multiple className="file-input-hidden" onClick={(e) => e.target.value = null} disabled={isSubmitting} />
-                                <button type="button" className="file-select-btn" onClick={() => solutionFileInputRef.current?.click()} disabled={isSubmitting}><i className="fas fa-folder-open"></i> Browse Files</button>
+                                )}
                             </div>
-                            {uploadProgress.solution > 0 && uploadProgress.solution < 100 && (
-                                <div className="upload-progress">
-                                    <div className="progress-bar"><div className="progress-fill" style={{ width: `${uploadProgress.solution}%` }}></div></div>
-                                    <span className="progress-text">{uploadProgress.solution}%</span>
+                        </div>
+                        
+                        <div className="form-group full-width">
+                            <label>Solution Files {isEditMode ? '(Optional)' : '*'}</label>
+                            <div className="file-upload-area">
+                                <div className="file-drop-zone" style={{ opacity: isSubmitting ? 0.6 : 1 }}>
+                                    <i className="fas fa-cloud-upload-alt"></i>
+                                    <p>Drag & drop solution files here or click to browse</p>
+                                    <p className="file-hint">Supports images (JPG, PNG, GIF, WebP) and PDFs up to 10MB</p>
+                                    <input type="file" ref={solutionFileInputRef} onChange={(e) => handleFileUpload(e.target.files, 'solution')} accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,image/*,application/pdf" multiple className="file-input-hidden" onClick={(e) => e.target.value = null} disabled={isSubmitting} />
+                                    <button type="button" className="file-select-btn" onClick={() => solutionFileInputRef.current?.click()} disabled={isSubmitting}><i className="fas fa-folder-open"></i> Browse Files</button>
                                 </div>
-                            )}
-                            {formData.solutionFiles.length > 0 && (
-                                <div className="file-list">
-                                    <div className="file-list-header">
-                                        <h4>Uploaded Files ({formData.solutionFiles.length})</h4>
-                                        <button type="button" className="preview-latex-btn" onClick={() => handlePreviewLatex('solution')} disabled={isSubmitting}><i className="fas fa-eye"></i> Preview LaTeX</button>
+                                {uploadProgress.solution > 0 && uploadProgress.solution < 100 && (
+                                    <div className="upload-progress">
+                                        <div className="progress-bar"><div className="progress-fill" style={{ width: `${uploadProgress.solution}%` }}></div></div>
+                                        <span className="progress-text">{uploadProgress.solution}%</span>
                                     </div>
-                                    {formData.solutionFiles.map((file, index) => (
-                                        <div key={index} className="file-item">
-                                            <i className={`fas ${getFileIcon(file)}`}></i>
-                                            <div className="file-info">
-                                                <span className="file-name">{file.name}</span>
-                                                <span className="file-size">{formatFileSize(file.size)}</span>
-                                            </div>
-                                            <button type="button" className="file-remove" onClick={() => removeFile(index, 'solution')} disabled={isSubmitting}><i className="fas fa-times"></i></button>
+                                )}
+                                {formData.solutionFiles.length > 0 && (
+                                    <div className="file-list">
+                                        <div className="file-list-header">
+                                            <h4>New Uploaded Files ({formData.solutionFiles.length})</h4>
+                                            <button type="button" className="preview-latex-btn" onClick={() => handlePreviewLatex('solution')} disabled={isSubmitting}><i className="fas fa-eye"></i> Preview LaTeX</button>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+                                        {formData.solutionFiles.map((file, index) => (
+                                            <div key={index} className="file-item">
+                                                <i className={`fas ${getFileIcon(file)}`}></i>
+                                                <div className="file-info">
+                                                    <span className="file-name">{file.name}</span>
+                                                    <span className="file-size">{formatFileSize(file.size)}</span>
+                                                </div>
+                                                <button type="button" className="file-remove" onClick={() => removeFile(index, 'solution')} disabled={isSubmitting}><i className="fas fa-times"></i></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {/* ✅ FIX: Safe references to existing URLs and solutionUrls */}
+                                {isEditMode && hasExistingSolutionUrls && formData.solutionFiles.length === 0 && (
+                                    <div className="existing-files-notice" style={{ marginTop: '10px', padding: '10px', background: '#f0fdf4', borderRadius: '6px', color: '#166534', fontSize: '0.9rem' }}>
+                                        <i className="fas fa-check-circle"></i> Keeping existing {editingQuestion?.solutionUrls?.length || 0} solution file(s). Upload new files to add or replace.
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div className="form-actions">
-                    <button type="button" className="cancel-btn" onClick={() => setCurrentPage('database')} disabled={isSubmitting}>Cancel</button>
-                    <button type="submit" className="submit-btn" disabled={isSubmitting}>
-                        {isSubmitting ? <><i className="fas fa-spinner fa-spin"></i> Submitting...</> : <><i className="fas fa-paper-plane"></i> Submit Problem</>}
-                    </button>
-                </div>
-                <div className="contribute-note">
-                    <i className="fas fa-info-circle"></i>
-                    <p>All submissions will be processed with Mathpix OCR to extract LaTeX, then reviewed before being published.</p>
-                    <p className="file-requirements">
-                        <strong>File Requirements:</strong>
-                        <span>Maximum 10MB per file</span>
-                        <span>Supported formats: JPG, PNG, GIF, WebP, PDF</span>
-                        <span>LaTeX will be automatically extracted using Mathpix API</span>
-                    </p>
-                </div>
-            </form>
-        </div>
-    );
-}, [useAuth, setCurrentPage]);
-    
+                    
+                    <div className="form-actions">
+                        <button type="button" className="cancel-btn" onClick={() => {
+                            if (isEditMode) {
+                                setEditingQuestion(null);
+                            }
+                            setCurrentPage('database');
+                        }} disabled={isSubmitting}>
+                            {isEditMode ? 'Cancel Edit' : 'Cancel'}
+                        </button>
+                        <button type="submit" className="submit-btn" disabled={isSubmitting}>
+                            {isSubmitting ? <><i className="fas fa-spinner fa-spin"></i> {isEditMode ? 'Updating...' : 'Submitting...'}</> : <><i className="fas fa-paper-plane"></i> {isEditMode ? 'Update Problem' : 'Submit Problem'}</>}
+                        </button>
+                    </div>
+                    
+                    <div className="contribute-note">
+                        <i className="fas fa-info-circle"></i>
+                        <p>All submissions will be processed with Mathpix OCR to extract LaTeX, then reviewed before being published.</p>
+                        <p className="file-requirements">
+                            <strong>File Requirements:</strong>
+                            <span>Maximum 10MB per file</span>
+                            <span>Supported formats: JPG, PNG, GIF, WebP, PDF</span>
+                            <span>LaTeX will be automatically extracted using Mathpix API</span>
+                        </p>
+                    </div>
+                </form>
+            </div>
+        );
+    }, [currentUser, setCurrentPage, editingQuestion, setEditingQuestion, setQuestionsDB, updateProblemInFirestore, fetchProblemsFromFirestore]);
+
     const renderPage = useCallback(() => {
         if (authLoading) return <div className="loading-screen"><div className="loader"></div><p>Loading...</p></div>;
         switch(currentPage) {
@@ -1431,21 +1382,61 @@ const App = () => {
                 <i className="far fa-copyright"></i> Sample database — real olympiad problems for demonstration. Built with React, Firebase & CSS.
             </footer>
             {selectedQuestion && (
-                <div className="modal-overlay" onClick={() => setSelectedQuestion(null)}>
-                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                <div 
+                    className={`modal-overlay ${isModalFullScreen ? 'fullscreen-overlay' : ''}`} 
+                    onClick={() => { setSelectedQuestion(null); setIsModalFullScreen(false); }}
+                >
+                    <div 
+                        className={`modal ${isModalFullScreen ? 'fullscreen-modal' : ''}`} 
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div className="modal-header">
                             <h3><i className="fas fa-question-circle"></i> Problem Details</h3>
                             <div className="modal-header-actions">
+                                
+                                {/* Edit Button */}
                                 <button 
-                                    className="toggle-latex-btn"
+                                    className="modal-action-btn edit-btn"
+                                    onClick={() => {
+                                        setEditingQuestion(selectedQuestion);
+                                        setSelectedQuestion(null);
+                                        setIsModalFullScreen(false);
+                                        setCurrentPage('contribute');
+                                    }}
+                                    title="Edit Problem"
+                                >
+                                    <i className="fas fa-edit"></i>
+                                </button>
+
+                                {/* Toggle LaTeX Button */}
+                                <button 
+                                    className="modal-action-btn toggle-latex-btn"
                                     onClick={() => setShowRawLatex(!showRawLatex)}
                                     title={showRawLatex ? "Show rendered view" : "Show LaTeX source"}
                                 >
                                     <i className={`fas ${showRawLatex ? 'fa-eye' : 'fa-code'}`}></i>
                                 </button>
-                                <button className="modal-close" onClick={() => setSelectedQuestion(null)}>×</button>
+
+                                {/* Full Screen Toggle Button */}
+                                <button 
+                                    className="modal-action-btn fullscreen-btn"
+                                    onClick={() => setIsModalFullScreen(!isModalFullScreen)}
+                                    title={isModalFullScreen ? "Exit full screen" : "Full screen"}
+                                >
+                                    <i className={`fas ${isModalFullScreen ? 'fa-compress' : 'fa-expand'}`}></i>
+                                </button>
+
+                                {/* Close Button */}
+                                <button 
+                                    className="modal-action-btn close-btn" 
+                                    onClick={() => { setSelectedQuestion(null); setIsModalFullScreen(false); }}
+                                    title="Close"
+                                >
+                                    <i className="fas fa-times"></i>
+                                </button>
                             </div>
                         </div>
+                        
                         <div className="modal-body">
                             <div className="modal-badges">
                                 <span className={`competition-badge ${getCompetitionClass(selectedQuestion.competition)}`}>{selectedQuestion.competition}</span>
@@ -1454,45 +1445,43 @@ const App = () => {
                                 {selectedQuestion.year && <span className="competition-badge" style={{ background: '#f3f4f6', color: '#4b5563' }}>{selectedQuestion.year}</span>}
                             </div>
                             
-                            {/* Problem Statement */}
                             <div className="modal-section">
-                            <h4><i className="fas fa-question-circle" style={{ color: '#4f46e5' }}></i> Problem Statement</h4>
-                            <div className="problem-text">
-                                {showRawLatex ? (
-                                    <pre className="latex-raw">
-                                        {selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
-                                    </pre>
-                                ) : (
-                                    <MathpixContent
-                                        content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
-                                        html={selectedQuestion.problemHtml}
-                                        className="problem-content"
-                                    />
-                                )}
-                            </div>
-                            {selectedQuestion.problemSource && (
-                                <div className="problem-source" style={{ marginTop: '8px', fontSize: '0.9rem', color: '#6b7280' }}>
-                                <i className="fas fa-book" style={{ marginRight: '4px' }}></i> Source: {selectedQuestion.problemSource}
+                                <h4><i className="fas fa-question-circle" style={{ color: '#4f46e5' }}></i> Problem Statement</h4>
+                                <div className="problem-text">
+                                    {showRawLatex ? (
+                                        <pre className="latex-raw">
+                                            {selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
+                                        </pre>
+                                    ) : (
+                                        <MathpixContent
+                                            content={selectedQuestion.problemLatex || selectedQuestion.text || 'No problem statement available'}
+                                            html={selectedQuestion.problemHtml}
+                                            className="problem-content"
+                                        />
+                                    )}
                                 </div>
-                            )}
+                                {selectedQuestion.problemSource && (
+                                    <div className="problem-source" style={{ marginTop: '8px', fontSize: '0.9rem', color: '#6b7280' }}>
+                                        <i className="fas fa-book" style={{ marginRight: '4px' }}></i> Source: {selectedQuestion.problemSource}
+                                    </div>
+                                )}
                             </div>
 
-                            {/* Solution */}
                             <div className="modal-section">
-                            <h4><i className="fas fa-lightbulb" style={{ color: '#f59e0b' }}></i> Solution / Answer</h4>
-                            <div className="solution-text">
-                                {showRawLatex ? (
-                                    <pre className="latex-raw">
-                                        {selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
-                                    </pre>
-                                ) : (
-                                    <MathpixContent
-                                        content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
-                                        html={selectedQuestion.solutionHtml}
-                                        className="solution-content"
-                                    />
-                                )}
-                            </div>
+                                <h4><i className="fas fa-lightbulb" style={{ color: '#f59e0b' }}></i> Solution / Answer</h4>
+                                <div className="solution-text">
+                                    {showRawLatex ? (
+                                        <pre className="latex-raw">
+                                            {selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
+                                        </pre>
+                                    ) : (
+                                        <MathpixContent
+                                            content={selectedQuestion.solutionLatex || selectedQuestion.solution || 'No solution available'}
+                                            html={selectedQuestion.solutionHtml}
+                                            className="solution-content"
+                                        />
+                                    )}
+                                </div>
                             </div>
                             
                             {selectedQuestion.subtags && selectedQuestion.subtags.length > 0 && (
@@ -1506,8 +1495,9 @@ const App = () => {
                                 </div>
                             )}
                         </div>
+                        
                         <div className="modal-footer">
-                            <button className="close-modal-btn" onClick={() => setSelectedQuestion(null)}>Close</button>
+                            <button className="close-modal-btn" onClick={() => { setSelectedQuestion(null); setIsModalFullScreen(false); }}>Close</button>
                         </div>
                     </div>
                 </div>

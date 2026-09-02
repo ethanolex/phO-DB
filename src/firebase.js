@@ -20,6 +20,8 @@ import {
     getFirestore, 
     collection, 
     addDoc, 
+    doc,               // <-- ADDED for updateProblemInFirestore
+    updateDoc,         // <-- ADDED for updateProblemInFirestore
     serverTimestamp,
     getDocs,  
     query,    
@@ -207,6 +209,82 @@ export const addProblemToFirestore = async (problemData) => {
           updatedAt: serverTimestamp(),
         });
         return { success: true, id: docRef.id, htmlDropped: true };
+      } catch (retryError) {
+        return { success: false, error: retryError.message };
+      }
+    }
+
+    return { success: false, error: error.message };
+  }
+};
+
+// ============================================================================
+// NEW: Update Problem in Firestore
+// ============================================================================
+export const updateProblemInFirestore = async (problemId, problemData) => {
+  try {
+    let dataToSave = { ...problemData };
+    let htmlDropped = dataToSave.htmlDropped || false;
+
+    // Check size including the updatedAt timestamp Firestore will add
+    const estimatedSize = estimateDocumentSize({
+      ...dataToSave,
+      updatedAt: new Date(),
+    });
+
+    if (estimatedSize > MAX_FIRESTORE_DOC_BYTES) {
+      console.warn(
+        `[Firestore] Document too large (${Math.round(estimatedSize / 1024)} KB). ` +
+        `Dropping HTML fields and falling back to MMD-only.`
+      );
+      delete dataToSave.problemHtml;
+      delete dataToSave.solutionHtml;
+      htmlDropped = true;
+
+      const newSize = estimateDocumentSize({
+        ...dataToSave,
+        updatedAt: new Date(),
+      });
+
+      if (newSize > MAX_FIRESTORE_DOC_BYTES) {
+        return {
+          success: false,
+          error:
+            `Document exceeds Firestore's 1 MiB limit even without HTML ` +
+            `(${Math.round(newSize / 1024)} KB). Consider splitting the problem into smaller parts.`,
+        };
+      }
+    }
+
+    const problemRef = doc(db, 'Problems', problemId);
+    await updateDoc(problemRef, {
+      ...dataToSave,
+      htmlDropped,
+      updatedAt: serverTimestamp(),
+    });
+
+    return { success: true, htmlDropped };
+  } catch (error) {
+    // Safety net: if Firestore rejects for size, retry without HTML
+    const isSizeError =
+      error.message &&
+      (error.message.includes('exceeds the maximum allowed size') ||
+       error.code === 'invalid-argument');
+
+    if (isSizeError && (problemData.problemHtml || problemData.solutionHtml)) {
+      console.warn('[Firestore] Update rejected for size. Retrying without HTML.');
+      try {
+        const fallbackData = { ...problemData };
+        delete fallbackData.problemHtml;
+        delete fallbackData.solutionHtml;
+
+        const problemRef = doc(db, 'Problems', problemId);
+        await updateDoc(problemRef, {
+          ...fallbackData,
+          htmlDropped: true,
+          updatedAt: serverTimestamp(),
+        });
+        return { success: true, htmlDropped: true };
       } catch (retryError) {
         return { success: false, error: retryError.message };
       }
@@ -454,7 +532,7 @@ export const convertToLatex = async (file, onProgress) => {
           url: fileUrl,
           conversion_formats: {
             "tex.zip": true,
-            "html": true,          // ← CHANGED: request HTML
+            "html": true,
           },
           options: {
             formats: ['latex', 'text'],
@@ -485,7 +563,7 @@ export const convertToLatex = async (file, onProgress) => {
         // Download MMD and HTML in parallel
         const [mmdResult, htmlResult] = await Promise.all([
           downloadPdfResults(pdfId, 'mmd'),
-          downloadPdfResults(pdfId, 'html'),   // ← CHANGED
+          downloadPdfResults(pdfId, 'html'),
         ]);
 
         if (onProgress) onProgress(100);
@@ -494,7 +572,7 @@ export const convertToLatex = async (file, onProgress) => {
           return {
             success: true,
             latex: mmdResult.content || '',
-            html: htmlResult.content || '',     // ← CHANGED
+            html: htmlResult.content || '',
             text: mmdResult.content || '',
             confidence: 100,
             rawResponse: { pdf_id: pdfId },
@@ -518,7 +596,7 @@ export const convertToLatex = async (file, onProgress) => {
       'https://api.mathpix.com/v3/text',
       {
         url: fileUrl,
-        formats: ['text', 'latex', 'html'],   // ← CHANGED: added 'html'
+        formats: ['text', 'latex', 'html'],
         math_inline_delimiters: ['$', '$'],
         math_display_delimiters: ['$$', '$$'],
         enable_table_detection: true,
@@ -537,19 +615,19 @@ export const convertToLatex = async (file, onProgress) => {
     if (response.status === 200 && response.data) {
       let latexText = '';
       let plainText = '';
-      let htmlContent = '';                    // ← CHANGED
+      let htmlContent = '';
       let confidence = 0;
 
       if (response.data.latex) latexText = Array.isArray(response.data.latex) ? response.data.latex.join('\n\n') : response.data.latex;
       if (response.data.text) plainText = Array.isArray(response.data.text) ? response.data.text.join('\n\n') : response.data.text;
-      if (response.data.html) htmlContent = Array.isArray(response.data.html) ? response.data.html.join('\n') : response.data.html;  // ← CHANGED
+      if (response.data.html) htmlContent = Array.isArray(response.data.html) ? response.data.html.join('\n') : response.data.html;
       if (response.data.confidence) confidence = response.data.confidence;
 
       if (latexText || plainText || htmlContent) {
         return {
           success: true,
           latex: latexText || plainText || '',
-          html: htmlContent,                   // ← CHANGED
+          html: htmlContent,
           text: plainText || latexText || '',
           confidence: confidence || 0,
           rawResponse: response.data,
@@ -620,9 +698,11 @@ export const fetchProblemsFromFirestore = async () => {
         subtags: data.subtags || [],
         problemLatex: data.problemLatex || '',
         solutionLatex: data.solutionLatex || '',
-        problemHtml: data.problemHtml || '',       // ← CHANGED
-        solutionHtml: data.solutionHtml || '',     // ← CHANGED
-        htmlDropped: data.htmlDropped || false,    // ← CHANGED
+        problemText: data.problemText || '',       // <-- ADDED
+        solutionText: data.solutionText || '',     // <-- ADDED
+        problemHtml: data.problemHtml || '',       
+        solutionHtml: data.solutionHtml || '',     
+        htmlDropped: data.htmlDropped || false,    
         problemStatementUrls: data.problemStatementUrls || [],
         solutionUrls: data.solutionUrls || [],
         createdAt: data.createdAt,
