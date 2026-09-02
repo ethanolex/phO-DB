@@ -688,6 +688,9 @@ export const fetchProblemsFromFirestore = async () => {
       problems.push({
         id: doc.id,
         competition: data.competition || '',
+        sourceType: data.sourceType || '',         
+        textbook: data.textbook || '',             
+        selectionTest: data.selectionTest || '',   
         difficulty: data.difficulty || '',
         topic: data.topic || '',
         title: data.title || '',
@@ -698,8 +701,8 @@ export const fetchProblemsFromFirestore = async () => {
         subtags: data.subtags || [],
         problemLatex: data.problemLatex || '',
         solutionLatex: data.solutionLatex || '',
-        problemText: data.problemText || '',       // <-- ADDED
-        solutionText: data.solutionText || '',     // <-- ADDED
+        problemText: data.problemText || '',       
+        solutionText: data.solutionText || '',     
         problemHtml: data.problemHtml || '',       
         solutionHtml: data.solutionHtml || '',     
         htmlDropped: data.htmlDropped || false,    

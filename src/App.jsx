@@ -117,6 +117,10 @@ const App = () => {
     
     // State for filters
     const [selectedCompetitions, setSelectedCompetitions] = useState([]);
+    const [selectedTextbooks, setSelectedTextbooks] = useState([]);
+    const [selectedSelectionTests, setSelectedSelectionTests] = useState([]);
+    const [showAllTextbooks, setShowAllTextbooks] = useState(false);
+    const [showAllSelectionTests, setShowAllSelectionTests] = useState(false);
     const [selectedDifficulties, setSelectedDifficulties] = useState([]);
     const [selectedTopics, setSelectedTopics] = useState([]);
     const [selectedSubtags, setSelectedSubtags] = useState([]);
@@ -157,6 +161,14 @@ const App = () => {
     const allCompetitions = useMemo(() => {
         return [...new Set(questionsDB.map(q => q.competition).filter(Boolean))].sort();
     }, [questionsDB]);
+
+    const allTextbooks = useMemo(() => {
+        return [...new Set(questionsDB.map(q => q.textbook).filter(Boolean))].sort();
+    }, [questionsDB]);
+
+    const allSelectionTests = useMemo(() => {
+        return [...new Set(questionsDB.map(q => q.selectionTest).filter(Boolean))].sort();
+    }, [questionsDB]);
     
     const allDifficulties = useMemo(() => {
         return [...new Set(questionsDB.map(q => q.difficulty).filter(Boolean))].sort((a, b) => {
@@ -192,14 +204,28 @@ const App = () => {
         setSelectedDifficulties([]);
         setSelectedTopics([]);
         setSelectedSubtags([]);
+        setSelectedTextbooks([]);
+        setSelectedSelectionTests([]);
         setSearchQuery("");
     }, []);
     
     const filteredQuestions = useMemo(() => {
         let results = [...questionsDB];
+        
         if (selectedCompetitions.length > 0) {
             results = results.filter(q => selectedCompetitions.includes(q.competition));
         }
+        
+        // ✅ ADDED: Textbook filter
+        if (selectedTextbooks.length > 0) {
+            results = results.filter(q => selectedTextbooks.includes(q.textbook));
+        }
+        
+        // ✅ ADDED: Selection Test filter
+        if (selectedSelectionTests.length > 0) {
+            results = results.filter(q => selectedSelectionTests.includes(q.selectionTest));
+        }
+        
         if (selectedDifficulties.length > 0) {
             results = results.filter(q => selectedDifficulties.includes(q.difficulty));
         }
@@ -221,10 +247,19 @@ const App = () => {
             );
         }
         return results;
-    }, [questionsDB, selectedCompetitions, selectedDifficulties, selectedTopics, selectedSubtags, searchQuery]);
+    }, [
+        questionsDB, 
+        selectedCompetitions, 
+        selectedTextbooks,          
+        selectedSelectionTests,     
+        selectedDifficulties, 
+        selectedTopics, 
+        selectedSubtags, 
+        searchQuery
+    ]);
     
-    const activeFiltersCount = selectedCompetitions.length + selectedDifficulties.length + selectedTopics.length + selectedSubtags.length + (searchQuery !== "" ? 1 : 0);
-    
+    const activeFiltersCount = selectedCompetitions.length + selectedDifficulties.length + selectedTopics.length + selectedSubtags.length + selectedTextbooks.length + selectedSelectionTests.length + (searchQuery !== "" ? 1 : 0);
+
     const getCompetitionClass = useCallback((comp) => {
         if (comp === "IPhO") return "competition-ipho";
         if (comp === "USAPhO") return "competition-usapho";
@@ -402,6 +437,61 @@ const App = () => {
                                     </button>
                                 )}
                             </div>
+
+                            {/* Textbooks Filter */}
+                            {allTextbooks.length > 0 && (
+                                <div className="filter-group">
+                                    <div className="filter-group-title">
+                                        <i className="fas fa-book"></i> Textbook
+                                        <span className="filter-count">{allTextbooks.length}</span>
+                                    </div>
+                                    <div className="filter-buttons">
+                                        {(showAllTextbooks ? allTextbooks : allTextbooks.slice(0, 3)).map(book => (
+                                            <button 
+                                                key={book} 
+                                                onClick={() => toggleFilter(book, selectedTextbooks, setSelectedTextbooks)} 
+                                                className={`filter-btn ${selectedTextbooks.includes(book) ? 'active' : ''}`}
+                                                title={book}
+                                            >
+                                                {book.length > 30 ? book.substring(0, 30) + '...' : book}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {allTextbooks.length > 3 && (
+                                        <button className="see-more-btn" onClick={() => setShowAllTextbooks(!showAllTextbooks)}>
+                                            {showAllTextbooks ? 'See less' : `See more (${allTextbooks.length - 3})`}
+                                            <i className={`fas fa-chevron-${showAllTextbooks ? 'up' : 'down'}`}></i>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Selection Tests Filter */}
+                            {allSelectionTests.length > 0 && (
+                                <div className="filter-group">
+                                    <div className="filter-group-title">
+                                        <i className="fas fa-clipboard-list"></i> Selection Test
+                                        <span className="filter-count">{allSelectionTests.length}</span>
+                                    </div>
+                                    <div className="filter-buttons">
+                                        {(showAllSelectionTests ? allSelectionTests : allSelectionTests.slice(0, 4)).map(test => (
+                                            <button 
+                                                key={test} 
+                                                onClick={() => toggleFilter(test, selectedSelectionTests, setSelectedSelectionTests)} 
+                                                className={`filter-btn ${selectedSelectionTests.includes(test) ? 'active' : ''}`}
+                                            >
+                                                {test}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    {allSelectionTests.length > 4 && (
+                                        <button className="see-more-btn" onClick={() => setShowAllSelectionTests(!showAllSelectionTests)}>
+                                            {showAllSelectionTests ? 'See less' : `See more (${allSelectionTests.length - 4})`}
+                                            <i className={`fas fa-chevron-${showAllSelectionTests ? 'up' : 'down'}`}></i>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                             
                             <div className="filter-group">
                                 <div className="filter-group-title">
@@ -496,6 +586,20 @@ const App = () => {
                                     {selectedCompetitions.map(comp => (
                                         <span key={comp} className="filter-tag">{comp}<button onClick={() => toggleFilter(comp, selectedCompetitions, setSelectedCompetitions)}><i className="fas fa-times-circle"></i></button></span>
                                     ))}
+                                    {selectedTextbooks.map(book => (
+                                        <span key={book} className="filter-tag textbook-filter-tag" title={book}>
+                                            <i className="fas fa-book" style={{ marginRight: '4px' }}></i>
+                                            {book.length > 25 ? book.substring(0, 25) + '...' : book}
+                                            <button onClick={() => toggleFilter(book, selectedTextbooks, setSelectedTextbooks)}><i className="fas fa-times-circle"></i></button>
+                                        </span>
+                                    ))}
+                                    {selectedSelectionTests.map(test => (
+                                        <span key={test} className="filter-tag selection-test-filter-tag">
+                                            <i className="fas fa-clipboard-list" style={{ marginRight: '4px' }}></i>
+                                            {test}
+                                            <button onClick={() => toggleFilter(test, selectedSelectionTests, setSelectedSelectionTests)}><i className="fas fa-times-circle"></i></button>
+                                        </span>
+                                    ))}
                                     {selectedDifficulties.map(diff => (
                                         <span key={diff} className="filter-tag">{diff}<button onClick={() => toggleFilter(diff, selectedDifficulties, setSelectedDifficulties)}><i className="fas fa-times-circle"></i></button></span>
                                     ))}
@@ -526,7 +630,21 @@ const App = () => {
                                             <div className="card-content">
                                                 <div className="card-badges">
                                                     <div className="badges-left">
-                                                        <span className={`competition-badge ${getCompetitionClass(question.competition)}`}>{question.competition}</span>
+                                                        {(question.sourceType === 'competition' || (!question.sourceType && question.competition)) && question.competition && (
+                                                            <span className={`competition-badge ${getCompetitionClass(question.competition)}`}>{question.competition}</span>
+                                                        )}
+                                                        {question.sourceType === 'textbook' && question.textbook && (
+                                                            <span className="source-badge textbook-badge" title={question.textbook}>
+                                                                <i className="fas fa-book" style={{ marginRight: '4px', fontSize: '0.7em' }}></i>
+                                                                {question.textbook.length > 25 ? question.textbook.substring(0, 25) + '...' : question.textbook}
+                                                            </span>
+                                                        )}
+                                                        {question.sourceType === 'selection_test' && question.selectionTest && (
+                                                            <span className="source-badge selection-test-badge" title={question.selectionTest}>
+                                                                <i className="fas fa-clipboard-list" style={{ marginRight: '4px', fontSize: '0.7em' }}></i>
+                                                                {question.selectionTest}
+                                                            </span>
+                                                        )}
                                                         <span className={`difficulty-badge ${getDifficultyClass(question.difficulty)}`}>{question.difficulty}</span>
                                                     </div>
                                                     {question.year && <span className="year-badge">{question.year}</span>}
@@ -561,7 +679,7 @@ const App = () => {
                 </div>
             </>
         );
-    }, [searchQuery, selectedCompetitions, selectedDifficulties, selectedTopics, selectedSubtags, filteredQuestions, activeFiltersCount, allCompetitions, allDifficulties, allTopics, allSubtags, questionsDB.length, loadingProblems, problemsError, showAllCompetitions, showAllTopics, showAllSubtags, toggleFilter, clearFilters, getCompetitionClass, getDifficultyClass]);
+    }, [searchQuery, selectedCompetitions, selectedDifficulties, selectedTopics, selectedSubtags, selectedTextbooks, selectedSelectionTests, allTextbooks, allSelectionTests, showAllTextbooks, showAllSelectionTests, filteredQuestions, activeFiltersCount, allCompetitions, allDifficulties, allTopics, allSubtags, questionsDB.length, loadingProblems, problemsError, showAllCompetitions, showAllTopics, showAllSubtags, toggleFilter, clearFilters, getCompetitionClass, getDifficultyClass]);
     
     const LoginPage = useCallback(() => {
         const [isLogin, setIsLogin] = useState(true);
@@ -737,7 +855,7 @@ const App = () => {
             "Pedrotti - Introduction to Optics",
             "Fowles - Introduction to Modern Optics",
             "Krane - Modern Physics",
-            "舒幼生、胡望雨、陈秉乾 - 物理学难题集萃",
+            "物理学难题集萃",
             "Others - Specify in problem source"
         ];
         
@@ -1439,7 +1557,19 @@ const App = () => {
                         
                         <div className="modal-body">
                             <div className="modal-badges">
-                                <span className={`competition-badge ${getCompetitionClass(selectedQuestion.competition)}`}>{selectedQuestion.competition}</span>
+                                {(selectedQuestion.sourceType === 'competition' || (!selectedQuestion.sourceType && selectedQuestion.competition)) && selectedQuestion.competition && (
+                                    <span className={`competition-badge ${getCompetitionClass(selectedQuestion.competition)}`}>{selectedQuestion.competition}</span>
+                                )}
+                                {selectedQuestion.sourceType === 'textbook' && selectedQuestion.textbook && (
+                                    <span className="source-badge textbook-badge" title={selectedQuestion.textbook}>
+                                        <i className="fas fa-book" style={{ marginRight: '4px' }}></i> {selectedQuestion.textbook}
+                                    </span>
+                                )}
+                                {selectedQuestion.sourceType === 'selection_test' && selectedQuestion.selectionTest && (
+                                    <span className="source-badge selection-test-badge" title={selectedQuestion.selectionTest}>
+                                        <i className="fas fa-clipboard-list" style={{ marginRight: '4px' }}></i> {selectedQuestion.selectionTest}
+                                    </span>
+                                )}
                                 <span className={`difficulty-badge ${getDifficultyClass(selectedQuestion.difficulty)}`}>{selectedQuestion.difficulty}</span>
                                 <span className="competition-badge" style={{ background: '#f3e8ff', color: '#6b21a5' }}>{selectedQuestion.topic}</span>
                                 {selectedQuestion.year && <span className="competition-badge" style={{ background: '#f3f4f6', color: '#4b5563' }}>{selectedQuestion.year}</span>}
